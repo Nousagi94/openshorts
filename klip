@@ -1,0 +1,13 @@
+#!/usr/bin/env bash
+# Shortcut: ./klip -u <link> [--dari mm:ss --sampai mm:ss] ...  (see funny_clip.py --help)
+set -euo pipefail
+cd "$(dirname "$0")"
+if [ ! -x .venv/bin/python ]; then
+  echo "Jalankan dulu: scripts/setup_mac.sh"
+  exit 1
+fi
+# Ollama must be up for the local moment picker; start it quietly if it is not.
+if grep -q "^LLM_BASE_URL=http://localhost:11434" .env 2>/dev/null && ! curl -s localhost:11434 >/dev/null; then
+  (ollama serve >/dev/null 2>&1 &) ; sleep 2
+fi
+exec .venv/bin/python funny_clip.py "$@"

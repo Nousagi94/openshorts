@@ -32,6 +32,7 @@ Ingest (yt-dlp or upload) → transcription (word timestamps) → scene detectio
 - `clip_selection.py`, `layout_picker.py`, `reframe_v2.py`, `split_layout.py`, `screencast_layout.py`, `camera_inset.py`: moment picking and layouts.
 - `editor.py` (Gemini FFmpeg effects), `hooks.py` (hook overlays), `subtitles.py` (SRT/ASS, burning), `translate.py` (ElevenLabs dubbing), `thumbnail.py`.
 - `mcp_server.py`, `mcp_stdio.py`: MCP over HTTP and stdio.
+- `funny/`, `funny_clip.py`: local funny-moment pipeline (laughter detection, Indonesian LLM prompt, comedy edit, captions, music). User guide: `PANDUAN-KLIP-LUCU.md`.
 - `cloud/`: auth, API keys, metering, billing, lifecycle emails, account erasure, autopilot, proxy ledger, alerts.
 - `dashboard/src/App.jsx`: main React component. `dashboard/vite-plugin-seo.js` + `dashboard/seo/`: build-time SEO pages, sitemap, llms.txt. `dashboard/seo/data.js`: single source of truth for pricing/pipeline/competitor facts.
 
@@ -47,6 +48,7 @@ Ingest (yt-dlp or upload) → transcription (word timestamps) → scene detectio
 - Quota wall, free overflow, lifecycle emails, cancel flow, survey, GDPR erasure → `docs/architecture/billing-and-account.md`
 - Concurrency/VRAM, auto-retry, deploy handover and drain → `docs/architecture/jobs-and-deploys.md`
 - Download routing, yt-dlp clients, paid proxy ledger → `docs/architecture/proxy-routing.md`
+- Funny clips (laughter, comedy edit, captions, music, Mac setup) → `docs/architecture/funny-clips.md`
 
 ## Hard rules
 

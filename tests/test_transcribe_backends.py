@@ -465,3 +465,24 @@ def test_repair_failure_keeps_parakeet_text(monkeypatch):
     t = _drift_transcript()
     assert tb._repair_script_drift(t, "/tmp/x.wav") == 0
     assert t["segments"][1]["text"].startswith("Тудей")
+
+
+def test_transcribe_media_passes_language_to_whisper(monkeypatch):
+    seen = {}
+    monkeypatch.delenv("TRANSCRIBE_BACKEND", raising=False)
+    monkeypatch.setattr(tb, "_has_audio_stream", lambda p: True)
+    monkeypatch.setattr(tb, "_transcribe_with_whisper",
+                        lambda p, language=None: seen.setdefault("lang", language))
+    tb.transcribe_media("video.mp4", language="id")
+    assert seen["lang"] == "id"
+
+
+def test_mlx_backend_falls_back_to_whisper(monkeypatch):
+    monkeypatch.setenv("TRANSCRIBE_BACKEND", "mlx")
+    monkeypatch.setattr(tb, "_has_audio_stream", lambda p: True)
+
+    def no_mlx(path, language=None):
+        raise ImportError("No module named 'mlx_whisper'")
+    monkeypatch.setattr(tb, "_transcribe_with_mlx", no_mlx)
+    monkeypatch.setattr(tb, "_transcribe_with_whisper", lambda p: "whisper")
+    assert tb.transcribe_media("video.mp4") == "whisper"
