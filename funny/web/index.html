@@ -46,6 +46,24 @@ pre.log{background:var(--bg);border:1px solid var(--line);border-radius:10px;pad
 .clip .acts{display:flex;gap:8px;margin-top:8px}
 .clip .acts a,.clip .acts button,.small{flex:1;text-align:center;padding:8px;border:1px solid var(--line);border-radius:8px;background:var(--card);color:var(--ink);font:inherit;font-size:13px;cursor:pointer;text-decoration:none}
 .hidden{display:none}
+.stages{list-style:none;padding:0;margin:14px 0 0}
+.stage{display:grid;grid-template-columns:26px 1fr auto;gap:4px 10px;align-items:center;padding:10px 0;border-top:1px solid var(--line)}
+.stage:first-child{border-top:0}
+.stage .ic{width:22px;height:22px;border-radius:50%;display:grid;place-items:center;font-size:13px;font-weight:700;border:2px solid var(--line);color:var(--muted)}
+.stage.jalan .ic{border-color:var(--accent);border-top-color:transparent;animation:spin .9s linear infinite}
+.stage.selesai .ic{background:var(--ok);border-color:var(--ok);color:#fff}
+.stage.gagal .ic{background:var(--bad);border-color:var(--bad);color:#fff}
+.stage .nm{font-weight:600}
+.stage.tunggu .nm{color:var(--muted);font-weight:400}
+.stage .tm{color:var(--muted);font-size:13px;white-space:nowrap}
+.stage .dt{grid-column:2/4;color:var(--muted);font-size:13px}
+.stage .bar{grid-column:2/4;height:6px;background:var(--line);border-radius:4px;overflow:hidden}
+.stage .bar i{display:block;height:100%;background:var(--accent);transition:width .6s}
+.stage .bar.indet i{width:30%;animation:slide 1.4s ease-in-out infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+@keyframes slide{0%{margin-left:-30%}100%{margin-left:100%}}
+details.tech{margin-top:12px}
+details.tech summary{cursor:pointer;color:var(--muted);font-size:13px}
 .progress{height:6px;background:var(--line);border-radius:4px;overflow:hidden;margin-top:10px}
 .progress i{display:block;height:100%;background:var(--accent);width:0}
 @media (max-width:560px){.row{grid-template-columns:1fr}}
@@ -121,7 +139,8 @@ pre.log{background:var(--bg);border:1px solid var(--line);border-radius:10px;pad
   <section class="card hidden" id="job">
     <div class="status"><span class="dot" id="dot"></span><span id="stat">Memproses…</span></div>
     <div class="hint" id="elapsed"></div>
-    <pre class="log" id="log"></pre>
+    <ol class="stages" id="stages"></ol>
+    <details class="tech"><summary>Lihat detail teknis</summary><pre class="log" id="log"></pre></details>
     <div class="clips" id="clips"></div>
     <div style="margin-top:12px" class="hidden" id="folderwrap"><button class="small" id="folder">Buka folder hasil di Finder</button></div>
   </section>
@@ -192,12 +211,47 @@ async function poll() {
   const j = await (await fetch('/api/jobs/' + jobId)).json();
   const done = j.state === 'selesai', bad = j.state === 'gagal';
   $('#dot').className = 'dot' + (done ? ' ok' : bad ? ' bad' : '');
-  $('#stat').textContent = done ? `Selesai, ${j.clips.length} klip` : bad ? 'Gagal' : j.state === 'antri' ? 'Menunggu giliran…' : 'Memproses… biarkan halaman ini terbuka';
-  $('#elapsed').textContent = bad ? j.error : `Waktu berjalan: ${Math.floor(j.elapsed / 60)} menit ${j.elapsed % 60} detik`;
+  const cur = j.stages.findIndex(s => s.state === 'jalan');
+  $('#stat').textContent = done ? `Selesai, ${j.clips.length} klip` : bad ? 'Gagal'
+    : j.state === 'antri' ? 'Menunggu giliran…'
+    : cur >= 0 ? `Tahap ${cur + 1} dari ${j.stages.length}: ${j.stages[cur].label}` : 'Memulai…';
+  $('#elapsed').textContent = bad ? j.error : `Total waktu berjalan: ${dur(j.elapsed)}${done ? '' : ' · biarkan halaman dan jendela Terminal tetap terbuka'}`;
+  renderStages(j.stages);
   const log = $('#log'); log.textContent = j.log.join('\n'); log.scrollTop = log.scrollHeight;
   if (done) { showClips(j); $('#go').disabled = false; $('#folderwrap').classList.remove('hidden'); return; }
   if (bad) { $('#go').disabled = false; return; }
   timer = setTimeout(poll, 1500);
+}
+
+function dur(s) {
+  s = Math.max(0, Math.round(s));
+  return s < 60 ? `${s} detik` : `${Math.floor(s / 60)} menit ${s % 60} detik`;
+}
+
+function renderStages(stages) {
+  const ol = $('#stages'); ol.innerHTML = '';
+  stages.forEach((st, i) => {
+    const li = document.createElement('li'); li.className = 'stage ' + st.state;
+    const icon = st.state === 'selesai' ? '✓' : st.state === 'gagal' ? '!' : st.state === 'jalan' ? '' : i + 1;
+    let time = '', bar = '';
+    if (st.elapsed != null && st.state !== 'tunggu') time = dur(st.elapsed);
+    if (st.state === 'jalan') {
+      if (st.fraction != null) {
+        bar = `<div class="bar"><i style="width:${Math.round(st.fraction * 100)}%"></i></div>`;
+        time = Math.round(st.fraction * 100) + '% · ' + time;
+      } else if (st.eta) {
+        const f = Math.min(0.95, st.elapsed / st.eta);
+        const left = st.eta - st.elapsed;
+        bar = `<div class="bar"><i style="width:${Math.round(f * 100)}%"></i></div>`;
+        time = left > 20 ? `perkiraan sisa ~${dur(left)}` : 'hampir selesai…';
+      } else bar = '<div class="bar indet"><i></i></div>';
+    }
+    li.innerHTML = `<span class="ic">${icon}</span><span class="nm"></span><span class="tm">${time}</span>`
+      + (st.detail ? '<span class="dt"></span>' : '') + bar;
+    li.querySelector('.nm').textContent = st.label;
+    if (st.detail) li.querySelector('.dt').textContent = st.detail;
+    ol.appendChild(li);
+  });
 }
 
 function showClips(j) {

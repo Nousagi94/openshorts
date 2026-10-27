@@ -18,6 +18,19 @@ import time
 
 from . import captions, effects, laughter, moments as moments_mod, music, synth
 
+# The stages a run goes through, in order, with the label the browser shows.
+STAGES = (("download", "Download / ambil video"), ("transkripsi", "Ubah suara jadi teks"),
+          ("tawa", "Cari suara tawa"), ("ai", "AI memilih momen lucu"),
+          ("render", "Edit dan render klip"))
+
+# Rough transcription speed (seconds of audio per second of work), only used
+# to give the progress bar an estimate: mlx on an M-series GPU vs CPU whisper.
+ASR_SPEED = {"mlx": 12.0, "cpu": 3.0}
+
+
+def _no_progress(stage, fraction=None, detail=None, eta=None):
+    pass
+
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 FONTS_DIR = os.path.join(REPO_ROOT, "fonts")
 SFX_DIR = os.path.join(REPO_ROOT, "assets", "sfx")
@@ -44,7 +57,7 @@ def parse_time(value):
     return secs
 
 
-def download(url, out_dir, start=None, end=None, log=print):
+def download(url, out_dir, start=None, end=None, log=print, progress=_no_progress):
     """Fetch a URL with yt-dlp (best <=1080p mp4); returns the file path.
 
     With ``start``/``end`` only that stretch is downloaded, so picking 15
@@ -53,7 +66,16 @@ def download(url, out_dir, start=None, end=None, log=print):
     import yt_dlp
     opts = {"format": "bv*[height<=1080][ext=mp4]+ba[ext=m4a]/b[height<=1080]/b",
             "outtmpl": os.path.join(out_dir, "source.%(ext)s"),
-            "merge_output_format": "mp4", "noplaylist": True, "quiet": True}
+            "merge_output_format": "mp4", "noplaylist": True, "quiet": True,
+            "noprogress": True}
+
+    def hook(d):
+        if d.get("status") == "downloading":
+            total = d.get("total_bytes") or d.get("total_bytes_estimate")
+            got = d.get("downloaded_bytes") or 0
+            mb = f"{got / 1e6:.0f} MB" + (f" dari {total / 1e6:.0f} MB" if total else "")
+            progress("download", got / total if total else None, mb)
+    opts["progress_hooks"] = [hook]
     if start is not None or end is not None:
         from yt_dlp.utils import download_range_func
         opts["download_ranges"] = download_range_func(None, [(start or 0, end or float("inf"))])
@@ -81,6 +103,12 @@ def cut_range(src, out_dir, start=None, end=None, log=print):
 
 def apple_silicon():
     return platform.system() == "Darwin" and platform.machine() == "arm64"
+
+
+def asr_eta(duration):
+    """Seconds the transcription will roughly take, for the progress bar."""
+    backend = os.environ.get("TRANSCRIBE_BACKEND") or ("mlx" if apple_silicon() else "cpu")
+    return 15 + duration / ASR_SPEED["mlx" if backend == "mlx" else "cpu"]
 
 
 def transcribe(path, language="id", log=print):
@@ -181,47 +209,62 @@ def post_text(m):
 
 
 def run(source, out_dir, transcript=None, language="id", max_clips=5, use_model=True,
-        options=None, start=None, end=None, log=print):
+        options=None, start=None, end=None, log=print, progress=_no_progress):
     """The whole pipeline. ``source`` is a file path or a URL.
 
     ``start``/``end`` (seconds) limit the analysis to that stretch; clip times
     in the output are then relative to the stretch, and ``range_offset`` in
     funny_clips.json says where it began in the original.
+
+    ``progress(stage, fraction, detail, eta)`` is called as each of
+    ``STAGES`` starts and advances; ``fraction`` is None when unknown and
+    ``eta`` is a rough total in seconds for stages without real progress.
     """
     options = options or {}
     os.makedirs(out_dir, exist_ok=True)
     cache_dir = os.path.join(out_dir, ".cache")
     if start is not None and end is not None and end <= start:
         raise ValueError("--sampai harus setelah --dari")
+    progress("download", None, "menyiapkan video")
     if source.startswith(("http://", "https://")):
-        source = download(source, out_dir, start, end, log)
+        source = download(source, out_dir, start, end, log, progress)
     elif start or end:
         source = cut_range(source, out_dir, start, end, log)
     w, h, duration = probe(source)
+    progress("download", 1.0, f"video {duration / 60:.0f} menit siap")
     log(f"📼 {os.path.basename(source)}: {w}x{h}, {duration:.0f}s")
     options["facecam_box"] = resolve_facecam(options, source, (w, h), log)
 
     if transcript is None:
+        progress("transkripsi", None, f"video {duration / 60:.0f} menit", asr_eta(duration))
         transcript = transcribe(source, language, log)
         with open(os.path.join(out_dir, "transcript.json"), "w", encoding="utf-8") as f:
             json.dump(transcript, f, ensure_ascii=False)
 
+    words = sum(len(s.get("words") or []) for s in transcript.get("segments", []))
+    progress("transkripsi", 1.0, f"{words} kata")
+    progress("tawa", None, "menganalisis audio")
     log("😂 Deteksi tawa…")
     curve, events = laughter.detect(source)
     log(f"   {len(events)} lonjakan tawa/hype di audio")
+    progress("tawa", 1.0, f"{len(events)} momen tawa terdengar")
+    progress("ai", None, "membaca transkrip", 30 + words / 40)
 
     found, laughs = moments_mod.find_moments(transcript, events, duration, max_clips,
                                              use_model=use_model, log=log)
+    progress("ai", 1.0, f"{len(found)} momen dipilih")
     if not found:
         log("🤷 Tidak ada momen lucu yang terdeteksi.")
     results = []
     for i, m in enumerate(found, 1):
+        progress("render", (i - 1) / len(found), f"klip {i} dari {len(found)}")
         out_path = os.path.join(out_dir, f"funny_{i:02d}.mp4")
         render = render_clip(source, (w, h), m, transcript, out_path, cache_dir, options, log)
         with open(out_path[:-4] + ".txt", "w", encoding="utf-8") as f:
             f.write(post_text(m))
         results.append(dict(m, file=os.path.basename(out_path), **render))
 
+    progress("render", 1.0, f"{len(results)} klip jadi")
     summary = {"source": os.path.basename(source), "duration": duration,
                "range_offset": start or 0.0,
                "language": transcript.get("language"), "laughs": laughs,

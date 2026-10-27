@@ -26,6 +26,9 @@ berbayar.
    lalu klik **Buat Klip**. Klipnya bisa langsung ditonton, di-download, dan caption-nya
    bisa di-copy dari halaman itu.
 
+Ada versi baru? Klik dua kali `Update.command`. Program diperbarui tanpa mengulang
+instalasi; hasil klip, pengaturan, dan musik kamu tetap aman.
+
 Jendela Terminal yang ikut terbuka biarkan saja selama aplikasi dipakai. Tutup jendela
 itu kalau sudah selesai. Bagian di bawah ini untuk yang mau memakai Terminal.
 

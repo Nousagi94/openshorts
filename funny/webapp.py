@@ -86,6 +86,28 @@ class Job:
         self.clips = []
         self.error = None
         self.started = time.time()
+        self.stages = [{"key": k, "label": label, "state": "tunggu", "fraction": None,
+                        "detail": "", "eta": None, "started": None, "ended": None}
+                       for k, label in pipeline.STAGES]
+
+    def progress(self, stage, fraction=None, detail=None, eta=None):
+        """Pipeline callback: mark ``stage`` running (or done at 1.0), earlier ones done."""
+        now = time.time()
+        for st in self.stages:
+            if st["key"] == stage:
+                if st["started"] is None:
+                    st["started"] = now
+                st["state"] = "selesai" if fraction is not None and fraction >= 1.0 else "jalan"
+                st["fraction"] = fraction
+                if detail is not None:
+                    st["detail"] = detail
+                if eta is not None:
+                    st["eta"] = eta
+                if st["state"] == "selesai":
+                    st["ended"] = now
+                break
+            if st["state"] != "selesai":  # skipped (e.g. transcript given): close it
+                st["state"], st["ended"] = "selesai", st["ended"] or now
 
     def add_log(self, *parts):
         line = " ".join(str(p) for p in parts)
@@ -93,7 +115,10 @@ class Job:
         print(line, flush=True)
 
     def to_dict(self):
-        return {"id": self.id, "state": self.state, "log": self.log[-200:],
+        now = time.time()
+        stages = [dict(st, elapsed=round((st["ended"] or now) - st["started"])
+                       if st["started"] else None) for st in self.stages]
+        return {"id": self.id, "state": self.state, "log": self.log[-200:], "stages": stages,
                 "clips": self.clips, "error": self.error,
                 "elapsed": round(time.time() - self.started)}
 
@@ -121,7 +146,7 @@ class Jobs:
             job.state = "jalan"
             try:
                 summary = pipeline.run(job.source, job.dir, options=job.options,
-                                       log=job.add_log, **job.kwargs)
+                                       log=job.add_log, progress=job.progress, **job.kwargs)
                 job.clips = [{
                     "file": c["file"], "title": c["title"], "caption": c["caption"],
                     "hashtags": c["hashtags"], "score": c["funny_score"],
@@ -132,6 +157,9 @@ class Jobs:
             except Exception as e:
                 job.state = "gagal"
                 job.error = f"{type(e).__name__}: {e}"
+                for st in job.stages:
+                    if st["state"] == "jalan":
+                        st["state"] = "gagal"
                 job.add_log("❌ " + job.error)
                 traceback.print_exc()
 
