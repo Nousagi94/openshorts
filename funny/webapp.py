@@ -168,12 +168,16 @@ JOBS = Jobs()
 
 
 class keep_awake:
-    """Stop the Mac from idle-sleeping while a job runs (``caffeinate -i``).
+    """Stop the computer from idle-sleeping while a job runs.
 
-    A sleeping Mac pauses the job and drops the download connection, so a
-    long run left alone would stall. Closing the lid still sleeps the Mac;
-    the page says so. No-op off macOS.
+    A sleeping machine pauses the job and drops the download connection, so a
+    long run left alone would stall. macOS: ``caffeinate -i`` for the life of
+    the job. Windows: SetThreadExecutionState from the job's own thread (the
+    flag is per thread, and ``Jobs._run`` enters this on that thread).
+    Closing a laptop lid still sleeps it; the page says so.
     """
+
+    ES_CONTINUOUS, ES_SYSTEM_REQUIRED = 0x80000000, 0x00000001
 
     def __enter__(self):
         self.proc = None
@@ -182,16 +186,25 @@ class keep_awake:
                 self.proc = subprocess.Popen(["caffeinate", "-i", "-w", str(os.getpid())])
             except OSError:
                 pass
+        elif sys.platform == "win32":
+            import ctypes
+            ctypes.windll.kernel32.SetThreadExecutionState(
+                self.ES_CONTINUOUS | self.ES_SYSTEM_REQUIRED)
         return self
 
     def __exit__(self, *exc):
         if self.proc:
             self.proc.terminate()
+        elif sys.platform == "win32":
+            import ctypes
+            ctypes.windll.kernel32.SetThreadExecutionState(self.ES_CONTINUOUS)
 
 
 def open_folder(path):
-    opener = "open" if sys.platform == "darwin" else "xdg-open"
-    subprocess.Popen([opener, path])
+    if sys.platform == "win32":
+        os.startfile(path)
+    else:
+        subprocess.Popen(["open" if sys.platform == "darwin" else "xdg-open", path])
 
 
 class Handler(BaseHTTPRequestHandler):

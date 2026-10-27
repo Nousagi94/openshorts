@@ -1,0 +1,2 @@
+# Windows launchers must keep CRLF line endings inside zips and checkouts
+*.bat -text

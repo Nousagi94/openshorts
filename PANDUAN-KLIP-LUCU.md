@@ -32,6 +32,22 @@ instalasi; hasil klip, pengaturan, dan musik kamu tetap aman.
 Jendela Terminal yang ikut terbuka biarkan saja selama aplikasi dipakai. Tutup jendela
 itu kalau sudah selesai. Bagian di bawah ini untuk yang mau memakai Terminal.
 
+## Windows (10 / 11)
+
+1. Download [funny-clips.zip](https://github.com/Nousagi94/openshorts/archive/refs/heads/funny-clips.zip).
+2. **Klik kanan** file ZIP, pilih **Extract All**, lalu **Extract**. Jangan menjalankan
+   file dari dalam ZIP tanpa di-extract.
+3. Di folder hasil extract, klik dua kali **Install.bat**. Kalau muncul "Windows protected
+   your PC", klik **More info** lalu **Run anyway**. Kalau muncul "Do you want to allow this
+   app...", klik **Yes**. Tunggu sampai muncul "Instalasi selesai" (20-40 menit).
+4. Untuk memakai: klik dua kali **Auto Klip Lucu.bat**. Halaman aplikasinya terbuka di
+   browser, sama persis seperti versi Mac.
+5. Ada versi baru? Klik dua kali **Update.bat**.
+
+Kebutuhan: Windows 10/11 64-bit, RAM 16 GB disarankan (8 GB bisa dengan model AI kecil),
+ruang kosong 20 GB. Di Windows, pengenal suara memakai CPU, jadi prosesnya kira-kira
+2-3 kali lebih lama daripada Mac Apple Silicon. Pakai rentang waktu untuk video panjang.
+
 ## 1. Pasang sekali saja (lewat Terminal)
 
 Butuh: Mac (disarankan Apple Silicon M1 ke atas, RAM 16 GB), ruang kosong

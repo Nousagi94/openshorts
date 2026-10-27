@@ -70,6 +70,18 @@ missing. `Install.command` wraps it for a Finder double-click. `./klip ...`
 runs the CLI.
 `TRANSCRIBE_BACKEND=mlx` falls back to CPU faster-whisper on any failure.
 
+## Windows
+
+`Install.bat` runs `scripts/setup_windows.ps1` (winget: Gyan.FFmpeg,
+Python.Python.3.12, Ollama.Ollama; then `.venv`, model pull, `.env` with CPU
+faster-whisper). `Auto Klip Lucu.bat` reloads PATH from the registry (Explorer
+may still hold the pre-install one), sets `PYTHONUTF8=1` for the emoji logs
+and starts `funny.webapp`; `Update.bat` mirrors `Update.command` with
+robocopy. The `.bat` files are stored CRLF and marked `-text` in
+`.gitattributes` so zips keep them runnable. `webapp.keep_awake` uses
+SetThreadExecutionState there. The `.ps1` stays ASCII: Windows PowerShell 5.1
+reads BOM-less files as ANSI.
+
 ## Tests
 
 `tests/test_funny.py` covers detection on synthetic audio, moment cleaning and
