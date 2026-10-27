@@ -7,6 +7,8 @@ Writes into ``out_dir``:
   funny_01.txt, ...                 title + caption + hashtags, ready to paste
   funny_clips.json                  everything above plus scores and timings
   transcript.json                   reused by ``--transcript`` on a re-run
+  render.json                       source, size and options, for re-rendering
+  funny_01.edit.json, ...           hand-corrected subtitles (see save_edits)
 """
 from __future__ import annotations
 
@@ -206,7 +208,10 @@ def resolve_facecam(options, source, size, log=print):
     return box
 
 
-def render_clip(src, src_size, moment, transcript, out_path, cache_dir, options, log=print):
+def render_clip(src, src_size, moment, transcript, out_path, cache_dir, options, log=print,
+                words=None, seed=None):
+    """Render one clip. ``words`` (clip time) overrides the transcript's subtitles;
+    ``seed`` picks the music track (default: the output path)."""
     start, end = moment["start"], moment["end"]
     facecam = options.get("facecam_box")
     layout = "stream" if facecam else options.get("layout", "blur")
@@ -218,12 +223,14 @@ def render_clip(src, src_size, moment, transcript, out_path, cache_dir, options,
     context = moment.get("context_text") if options.get("context", True) else None
     ass_path = out_path.rsplit(".", 1)[0] + ".ass"
     tr = transcript if options.get("captions", True) else None
+    if not options.get("captions", True):
+        words = None
     if not captions.write_ass(tr, start, end, ass_path, memes=plan.memes, style=style,
-                              context=context):
+                              context=context, words=words):
         ass_path = None
     track = None
     if options.get("music", True):
-        track = choose_music(cache_dir, options.get("mood", "funny"), seed=out_path)
+        track = choose_music(cache_dir, options.get("mood", "funny"), seed=seed or out_path)
     cmd = effects.build_command(
         src, start, end, out_path, plan, src_size[:2], ass_path=ass_path,
         fonts_dir=FONTS_DIR, sfx_paths=sfx_paths(cache_dir) if plan.sfx else None,
@@ -275,12 +282,16 @@ def run(source, out_dir, transcript=None, language="id", max_clips=5, use_model=
     progress("download", 1.0, f"video {duration / 60:.0f} menit siap")
     log(f"📼 {os.path.basename(source)}: {w}x{h}, {duration:.0f}s")
     options["facecam_box"] = resolve_facecam(options, source, (w, h), log)
+    with open(os.path.join(out_dir, "render.json"), "w", encoding="utf-8") as f:
+        json.dump({"source": os.path.abspath(source), "size": [w, h], "options": options}, f,
+                  ensure_ascii=False, indent=2)
 
     if transcript is None:
         progress("transkripsi", None, f"video {duration / 60:.0f} menit", asr_eta(duration))
         transcript = transcribe(source, language, log, progress)
-        with open(os.path.join(out_dir, "transcript.json"), "w", encoding="utf-8") as f:
-            json.dump(transcript, f, ensure_ascii=False)
+    # Always next to the clips: the subtitle editor reads the words from it.
+    with open(os.path.join(out_dir, "transcript.json"), "w", encoding="utf-8") as f:
+        json.dump(transcript, f, ensure_ascii=False)
 
     words = sum(len(s.get("words") or []) for s in transcript.get("segments", []))
     progress("transkripsi", 1.0, f"{words} kata")
@@ -314,3 +325,112 @@ def run(source, out_dir, transcript=None, language="id", max_clips=5, use_model=
     with open(os.path.join(out_dir, "funny_clips.json"), "w", encoding="utf-8") as f:
         json.dump(summary, f, ensure_ascii=False, indent=2)
     return summary
+
+
+# --- correcting subtitles after the run ----------------------------------------
+
+def read_json(path, default=None):
+    if not os.path.exists(path):
+        return default
+    with open(path, encoding="utf-8") as f:
+        return json.load(f)
+
+
+def _write_json(path, data):
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False, indent=2)
+
+
+def render_state(job_dir, summary):
+    """Source, size and options of a finished run.
+
+    Runs from before render.json existed get a best guess: the source by name
+    next to the clips (or in the web uploads folder) and default options with
+    each clip's own layout; a facecam layout without its box falls back to blur.
+    """
+    state = read_json(os.path.join(job_dir, "render.json"))
+    if state and os.path.exists(state["source"]):
+        return state
+    name = os.path.basename(summary.get("source") or "")
+    for cand in (os.path.join(job_dir, name),
+                 os.path.join(os.path.dirname(job_dir), "uploads", name)):
+        if name and os.path.exists(cand):
+            w, h, _ = probe(cand)
+            options = (state or {}).get("options") or {}
+            return {"source": cand, "size": [w, h], "options": options}
+    raise FileNotFoundError("video sumber klip ini sudah tidak ada, buat ulang klipnya")
+
+
+def _clip(job_dir, index):
+    summary = read_json(os.path.join(job_dir, "funny_clips.json"))
+    if not summary:
+        raise FileNotFoundError("hasil proses tidak ditemukan")
+    name = f"funny_{index:02d}.mp4"
+    for clip in summary["clips"]:
+        if clip["file"] == name:
+            return summary, clip
+    raise FileNotFoundError(f"{name} tidak ada")
+
+
+def _clip_words(job_dir, index, clip):
+    edit = read_json(os.path.join(job_dir, f"funny_{index:02d}.edit.json"))
+    if edit:
+        return edit["words"]
+    transcript = read_json(os.path.join(job_dir, "transcript.json"), {})
+    return captions.clip_words(transcript, clip["start"], clip["end"])
+
+
+def caption_lines(job_dir, index):
+    """What the subtitle editor shows for one clip: its on-screen lines,
+    the context line and the post text."""
+    _, clip = _clip(job_dir, index)
+    lines = captions.edit_blocks(_clip_words(job_dir, index, clip))
+    txt = os.path.join(job_dir, f"funny_{index:02d}.txt")
+    post = open(txt, encoding="utf-8").read() if os.path.exists(txt) else post_text(clip)
+    return {"lines": [{"start": round(l["start"], 2), "end": round(l["end"], 2),
+                       "text": l["text"]} for l in lines],
+            "context": clip.get("context_text") or "", "post": post}
+
+
+def _replace(src, dst, tries=20):
+    """os.replace that waits out a player still reading ``dst`` (Windows locks it)."""
+    for i in range(tries):
+        try:
+            return os.replace(src, dst)
+        except PermissionError:
+            if i == tries - 1:
+                raise
+            time.sleep(0.5)
+
+
+def save_edits(job_dir, index, texts, context=None, post=None, log=print):
+    """Apply the editor's corrections to clip ``index`` (1-based).
+
+    ``texts`` has one entry per line of :func:`caption_lines`. The clip is
+    re-rendered only when a line or the context changed; ``post`` just
+    rewrites the .txt. Returns True when the video was re-rendered.
+    """
+    summary, clip = _clip(job_dir, index)
+    stem = os.path.join(job_dir, f"funny_{index:02d}")
+    if post is not None:
+        with open(stem + ".txt", "w", encoding="utf-8") as f:
+            f.write(post.strip() + "\n")
+    lines = captions.edit_blocks(_clip_words(job_dir, index, clip))
+    if len(texts) != len(lines):
+        raise ValueError("jumlah baris subtitle berubah, muat ulang editornya")
+    texts = [" ".join(str(t).split()) for t in texts]
+    context = clip.get("context_text") or "" if context is None else " ".join(context.split())
+    if texts == [l["text"] for l in lines] and context == (clip.get("context_text") or ""):
+        return False
+    words = captions.apply_edits([dict(l, text=t) for l, t in zip(lines, texts)])
+    state = render_state(job_dir, summary)
+    moment = dict(clip, context_text=context)
+    tmp = stem + ".new.mp4"
+    render_clip(state["source"], state["size"], moment, None, tmp,
+                os.path.join(job_dir, ".cache"), dict(state["options"]), log,
+                words=words, seed=stem + ".mp4")
+    _replace(tmp, stem + ".mp4")
+    _write_json(stem + ".edit.json", {"words": words})
+    clip["context_text"] = context
+    _write_json(os.path.join(job_dir, "funny_clips.json"), summary)
+    return True

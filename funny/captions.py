@@ -195,11 +195,58 @@ Style: Context,Montserrat ExtraBold,46,{WHITE},{WHITE},{BLACK},&H96000000,0,0,0,
 
 
 def write_ass(transcript, clip_start, clip_end, path, memes=(), style=DEFAULT_STYLE,
-              context=None) -> bool:
-    """Write the clip's captions (and overlays); False when there is nothing to show."""
-    words = clip_words(transcript, clip_start, clip_end)
+              context=None, words=None) -> bool:
+    """Write the clip's captions (and overlays); False when there is nothing to show.
+
+    ``words`` (clip time) replaces the transcript's words, e.g. after the
+    creator corrected the subtitles by hand.
+    """
+    if words is None:
+        words = clip_words(transcript, clip_start, clip_end)
     if not words and not memes and not context:
         return False
     with open(path, "w", encoding="utf-8") as f:
         f.write(build_ass(words, memes, style, context))
     return True
+
+
+def edit_blocks(words, max_words=8):
+    """``words`` as editable lines (start, end, text, words): a phrase each,
+    split at a sentence end, a pause or ``max_words``. Bigger than the
+    on-screen blocks so a long clip is a short list to read through."""
+    lines, cur = [], []
+    for w in words:
+        if cur and (len(cur) >= max_words or w["start"] - cur[-1]["end"] > 0.6
+                    or cur[-1]["word"].endswith((".", "?", "!"))):
+            lines.append(cur)
+            cur = []
+        cur.append(w)
+    if cur:
+        lines.append(cur)
+    return [{"start": b[0]["start"], "end": b[-1]["end"],
+             "text": " ".join(w["word"] for w in b), "words": b} for b in lines]
+
+
+def apply_edits(lines):
+    """Words back from edited lines (``start``, ``end``, ``text``).
+
+    A line keeping its word count keeps each word's timing; otherwise its
+    words share the line's time in proportion to their length. An emptied
+    line drops its words.
+    """
+    out = []
+    for line in lines:
+        texts = str(line.get("text") or "").split()
+        start, end = float(line["start"]), float(line["end"])
+        old = line.get("words") or []
+        if len(old) == len(texts):
+            out += [{"word": t, "start": w["start"], "end": w["end"]} for t, w in zip(texts, old)]
+            continue
+        end = max(end, start + 0.25 * len(texts))
+        total = sum(len(t) + 1 for t in texts) or 1
+        t0 = start
+        for t in texts:
+            t1 = t0 + (end - start) * (len(t) + 1) / total
+            out.append({"word": t, "start": round(t0, 3), "end": round(t1, 3)})
+            t0 = t1
+    return out

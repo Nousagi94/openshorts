@@ -118,7 +118,7 @@ class Job:
         now = time.time()
         stages = [dict(st, elapsed=round((st["ended"] or now) - st["started"])
                        if st["started"] else None) for st in self.stages]
-        return {"id": self.id, "state": self.state, "log": self.log[-200:], "stages": stages,
+        return {"id": self.id, "state": self.state, "source": os.path.basename(str(self.source or "")), "log": self.log[-200:], "stages": stages,
                 "clips": self.clips, "error": self.error,
                 "elapsed": round(time.time() - self.started)}
 
@@ -147,11 +147,7 @@ class Jobs:
             try:
                 summary = pipeline.run(job.source, job.dir, options=job.options,
                                        log=job.add_log, progress=job.progress, **job.kwargs)
-                job.clips = [{
-                    "file": c["file"], "title": c["title"], "caption": c["caption"],
-                    "hashtags": c["hashtags"], "score": c["funny_score"],
-                    "duration": round(c["end"] - c["start"]),
-                    "reason": c.get("reason", "")} for c in summary["clips"]]
+                job.clips = clip_cards(job.dir, summary)
                 job.state = "selesai"
                 job.add_log(f"✅ Selesai: {len(job.clips)} klip")
             except Exception as e:
@@ -165,6 +161,43 @@ class Jobs:
 
 
 JOBS = Jobs()
+
+
+def clip_cards(job_dir, summary):
+    """What the page shows per clip; ``post`` is the (maybe edited) .txt."""
+    cards = []
+    for c in summary["clips"]:
+        txt = os.path.join(job_dir, c["file"][:-4] + ".txt")
+        post = open(txt, encoding="utf-8").read() if os.path.exists(txt) \
+            else pipeline.post_text(c)
+        cards.append({"file": c["file"], "title": c["title"], "post": post.strip(),
+                      "score": c["funny_score"], "duration": round(c["end"] - c["start"]),
+                      "reason": c.get("reason", ""),
+                      "version": int(os.path.getmtime(os.path.join(job_dir, c["file"])))
+                      if os.path.exists(os.path.join(job_dir, c["file"])) else 0})
+    return cards
+
+
+def load_finished_jobs():
+    """Jobs from earlier runs of the app, so their clips stay viewable and editable."""
+    if not os.path.isdir(ROOT):
+        return
+    for name in sorted(os.listdir(ROOT)):
+        path = os.path.join(ROOT, name, "funny_clips.json")
+        if not _JOB_ID.match(name) or name in JOBS.jobs or not os.path.exists(path):
+            continue
+        try:
+            with open(path, encoding="utf-8") as f:
+                summary = json.load(f)
+            job = Job(name, summary.get("source"), {}, {})
+            job.clips = clip_cards(job.dir, summary)
+        except (OSError, ValueError, KeyError):
+            continue
+        job.state = "selesai"
+        job.started = os.path.getmtime(path)
+        for st in job.stages:
+            st["state"] = "selesai"
+        JOBS.jobs[name] = job
 
 
 class keep_awake:
@@ -281,6 +314,15 @@ class Handler(BaseHTTPRequestHandler):
         if m:
             job = JOBS.jobs.get(m.group(1))
             return self._json(job.to_dict()) if job else self._error("job tidak ada", 404)
+        m = re.match(r"^/api/jobs/([\d-]+)/clips/(\d+)/captions$", path)
+        if m:
+            job = JOBS.jobs.get(m.group(1))
+            if not job:
+                return self._error("job tidak ada", 404)
+            try:
+                return self._json(pipeline.caption_lines(job.dir, int(m.group(2))))
+            except (OSError, ValueError) as e:
+                return self._error(str(e), 404)
         m = re.match(r"^/files/([\d-]+)/([^/]+)$", path)
         if m:
             job_id, name = m.group(1), unquote(m.group(2))
@@ -299,11 +341,36 @@ class Handler(BaseHTTPRequestHandler):
             return self._upload()
         if path == "/api/jobs":
             return self._create_job()
+        m = re.match(r"^/api/jobs/([\d-]+)/clips/(\d+)/captions$", path)
+        if m and m.group(1) in JOBS.jobs:
+            return self._save_captions(JOBS.jobs[m.group(1)], int(m.group(2)))
         m = re.match(r"^/api/jobs/([\d-]+)/open$", path)
         if m and m.group(1) in JOBS.jobs:
             open_folder(JOBS.jobs[m.group(1)].dir)
             return self._json({"ok": True})
         self._error("tidak ditemukan", 404)
+
+    def _save_captions(self, job, index):
+        if job.state != "selesai":
+            return self._error("tunggu prosesnya selesai dulu")
+        try:
+            form = self._body_json()
+            texts = form["lines"]
+        except (ValueError, KeyError, TypeError):
+            return self._error("isian tidak valid")
+        # One render at a time: a running job already fills the GPU/CPU.
+        if not JOBS.gate.acquire(blocking=False):
+            return self._error("masih ada proses lain berjalan, coba lagi setelah selesai", 409)
+        try:
+            rendered = pipeline.save_edits(job.dir, index, texts, form.get("context"),
+                                           form.get("post"), log=job.add_log)
+            job.clips = clip_cards(job.dir, pipeline.read_json(
+                os.path.join(job.dir, "funny_clips.json")))
+        except (OSError, ValueError, RuntimeError) as e:
+            return self._error(str(e))
+        finally:
+            JOBS.gate.release()
+        self._json({"rendered": rendered, "job": job.to_dict()})
 
     def _upload(self):
         name = _SAFE.sub("_", unquote(self.headers.get("X-Filename") or "video.mp4"))[-120:]
@@ -353,6 +420,7 @@ def main():
     except ImportError:
         pass
     os.makedirs(ROOT, exist_ok=True)
+    load_finished_jobs()
     server = ThreadingHTTPServer((HOST, PORT), Handler)
     url = f"http://{HOST}:{PORT}"
     print(f"Auto Klip Lucu jalan di {url}  (tutup jendela ini untuk berhenti)", flush=True)

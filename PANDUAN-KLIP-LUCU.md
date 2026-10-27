@@ -84,6 +84,14 @@ Hasilnya ada di folder `output/funny/`:
 - `funny_01.txt`, ... judul, caption, dan hashtag siap copy-paste
 - `funny_clips.json` detail lengkap (skor lucu, waktu punchline, dll)
 
+### Memperbaiki subtitle
+
+Kalau ada kata yang salah dengar, klik **✏️ Edit subtitle** di bawah klip.
+Ketik kata yang benar (huruf biasa saja, nanti otomatis jadi kapital), ubah
+teks konteks atau caption posting kalau perlu, lalu klik **Simpan & render
+ulang**. Klip baru siap dalam sekitar satu menit. Hasil lama tetap ada di
+bagian **Hasil sebelumnya**, jadi bisa diedit walaupun aplikasi sudah ditutup.
+
 ## 3. Atur gaya
 
 | Opsi | Fungsi |

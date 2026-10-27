@@ -66,6 +66,28 @@ details.tech{margin-top:12px}
 details.tech summary{cursor:pointer;color:var(--muted);font-size:13px}
 .progress{height:6px;background:var(--line);border-radius:4px;overflow:hidden;margin-top:10px}
 .progress i{display:block;height:100%;background:var(--accent);width:0}
+.clip .acts.two{margin-top:6px}
+.past{list-style:none;padding:0;margin:0}
+.past li{display:flex;justify-content:space-between;gap:10px;align-items:center;padding:9px 0;border-top:1px solid var(--line)}
+.past li:first-child{border-top:0}
+.past .nm{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.past button{flex:0 0 auto}
+dialog{border:0;border-radius:16px;padding:0;width:min(940px,calc(100vw - 32px));max-height:calc(100vh - 32px);background:var(--card);color:var(--ink)}
+dialog::backdrop{background:rgba(0,0,0,.55)}
+.ed{display:grid;grid-template-columns:260px 1fr;gap:18px;padding:18px}
+.ed video{width:100%;aspect-ratio:9/16;background:#000;border-radius:10px;display:block}
+.ed h3{margin:0 0 4px;font-size:18px}
+.ed .lines{max-height:46vh;overflow:auto;border:1px solid var(--line);border-radius:10px;padding:6px;margin:6px 0 12px}
+.ed .ln{display:grid;grid-template-columns:62px 1fr;gap:8px;align-items:center;padding:3px 0}
+.ed .ln button{padding:7px 0;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--muted);font:12px ui-monospace,Menlo,monospace;cursor:pointer}
+.ed .ln.now input{border-color:var(--accent);background:var(--soft)}
+.ed .ln input{padding:8px 10px}
+.ed textarea{width:100%;min-height:110px;padding:10px 12px;border:1px solid var(--line);border-radius:10px;background:var(--bg);color:var(--ink);font:inherit}
+.ed .bar2{display:flex;gap:10px;justify-content:flex-end;margin-top:12px}
+.ed .bar2 button{padding:11px 18px;border-radius:10px;border:1px solid var(--line);background:var(--card);color:var(--ink);font:inherit;cursor:pointer}
+.ed .bar2 .save{background:var(--accent);border-color:var(--accent);color:var(--accent-ink);font-weight:600}
+.ed .bar2 button:disabled{opacity:.5;cursor:default}
+@media (max-width:700px){.ed{grid-template-columns:1fr}.ed video{max-height:40vh;width:auto;margin:0 auto}}
 @media (max-width:560px){.row{grid-template-columns:1fr}}
 </style>
 </head>
@@ -144,7 +166,31 @@ details.tech summary{cursor:pointer;color:var(--muted);font-size:13px}
     <div class="clips" id="clips"></div>
     <div style="margin-top:12px" class="hidden" id="folderwrap"><button class="small" id="folder">Buka folder hasil</button></div>
   </section>
+
+  <section class="card hidden" id="pastcard">
+    <h2>Hasil sebelumnya</h2>
+    <ul class="past" id="past"></ul>
+  </section>
 </main>
+
+<dialog id="ed">
+  <div class="ed">
+    <div><video id="edvid" controls playsinline preload="metadata"></video>
+      <div class="hint">Klik jam di sebelah kiri baris untuk melompat ke bagian itu.</div></div>
+    <div>
+      <h3>Edit subtitle</h3>
+      <div class="hint" style="margin:0 0 12px">Perbaiki kata yang salah dengar. Ketik biasa saja, nanti otomatis jadi huruf besar dan kata kasar tetap disensor. Kosongkan baris untuk menghapusnya.</div>
+      <label for="edctx">Teks konteks di awal</label>
+      <input id="edctx" type="text" placeholder="contoh: Saya: ngajak temen main horor">
+      <label style="margin-top:12px">Subtitle</label>
+      <div class="lines" id="edlines"></div>
+      <label for="edpost">Caption untuk posting (judul, caption, hashtag)</label>
+      <textarea id="edpost"></textarea>
+      <div class="err" id="ederr"></div>
+      <div class="bar2"><button id="edcancel">Batal</button><button class="save" id="edsave">Simpan &amp; render ulang</button></div>
+    </div>
+  </div>
+</dialog>
 <script>
 const $ = s => document.querySelector(s);
 let src = 'url', upload = null, uploading = false, jobId = null, timer = null;
@@ -218,7 +264,7 @@ async function poll() {
   $('#elapsed').textContent = bad ? j.error : `Total waktu berjalan: ${dur(j.elapsed)}${done ? '' : ' · biarkan jendela Terminal terbuka dan jangan tutup layar laptop (colok charger untuk video panjang)'}`;
   renderStages(j.stages);
   const log = $('#log'); log.textContent = j.log.join('\n'); log.scrollTop = log.scrollHeight;
-  if (done) { showClips(j); $('#go').disabled = false; $('#folderwrap').classList.remove('hidden'); return; }
+  if (done) { showClips(j); $('#go').disabled = false; $('#folderwrap').classList.remove('hidden'); loadPast(); return; }
   if (bad) { $('#go').disabled = false; return; }
   timer = setTimeout(poll, 1500);
 }
@@ -263,18 +309,95 @@ function renderStages(stages) {
 function showClips(j) {
   const box = $('#clips'); box.innerHTML = '';
   if (!j.clips.length) box.innerHTML = '<p class="hint">Tidak ada momen lucu yang ketemu. Coba rentang waktu lain.</p>';
-  j.clips.forEach(c => {
+  j.clips.forEach((c, i) => {
     const el = document.createElement('div'); el.className = 'clip';
-    const post = `${c.title}\n\n${c.caption}\n\n${c.hashtags.join(' ')}`;
-    el.innerHTML = `<video controls preload="metadata" playsinline src="/files/${j.id}/${c.file}"></video>
+    const url = `/files/${j.id}/${c.file}?v=${c.version}`;
+    el.innerHTML = `<video controls preload="metadata" playsinline src="${url}"></video>
       <div class="meta"><div class="t"></div><div class="s">Skor lucu ${c.score} · ${c.duration} detik</div>
-      <div class="acts"><a download href="/files/${j.id}/${c.file}">Download</a><button>Copy caption</button></div></div>`;
+      <div class="acts"><a download="${c.file}" href="${url}">Download</a><button class="copy">Copy caption</button></div>
+      <div class="acts two"><button class="edit">✏️ Edit subtitle</button></div></div>`;
     el.querySelector('.t').textContent = c.title;
-    const btn = el.querySelector('button');
-    btn.onclick = async () => { await navigator.clipboard.writeText(post); btn.textContent = 'Tersalin ✓'; setTimeout(() => btn.textContent = 'Copy caption', 1500); };
+    const btn = el.querySelector('.copy');
+    btn.onclick = async () => { await navigator.clipboard.writeText(c.post); btn.textContent = 'Tersalin ✓'; setTimeout(() => btn.textContent = 'Copy caption', 1500); };
+    el.querySelector('.edit').onclick = () => openEditor(j.id, +c.file.match(/\d+/)[0], url);
     box.appendChild(el);
   });
 }
+
+// --- subtitle editor ---------------------------------------------------------
+let ed = null;
+const fmt = t => `${Math.floor(t / 60)}:${String(Math.floor(t % 60)).padStart(2, '0')}`;
+async function openEditor(job, index, url) {
+  const r = await fetch(`/api/jobs/${job}/clips/${index}/captions`);
+  const d = await r.json();
+  if (!r.ok) return alert(d.error || 'Gagal membuka editor');
+  ed = {job, index, lines: d.lines};
+  $('#ederr').textContent = '';
+  $('#edctx').value = d.context; $('#edpost').value = d.post;
+  const box = $('#edlines'); box.innerHTML = '';
+  if (!d.lines.length) box.innerHTML = '<p class="hint">Klip ini tidak punya subtitle.</p>';
+  d.lines.forEach(l => {
+    const row = document.createElement('div'); row.className = 'ln';
+    row.innerHTML = '<button type="button"></button><input type="text">';
+    row.querySelector('button').textContent = fmt(l.start);
+    row.querySelector('input').value = l.text;
+    const seek = () => { const v = $('#edvid'); v.currentTime = l.start + 0.01; };
+    row.querySelector('button').onclick = () => { seek(); $('#edvid').play(); };
+    row.querySelector('input').onfocus = seek;
+    box.appendChild(row);
+  });
+  $('#edvid').src = url;
+  $('#edsave').disabled = false; $('#edsave').textContent = 'Simpan & render ulang';
+  $('#ed').showModal();
+}
+$('#edvid').ontimeupdate = () => {
+  if (!ed) return;
+  const t = $('#edvid').currentTime;
+  document.querySelectorAll('#edlines .ln').forEach((row, i) => {
+    const l = ed.lines[i]; row.classList.toggle('now', t >= l.start && t < Math.max(l.end, l.start + 0.3));
+  });
+};
+function closeEditor() { const v = $('#edvid'); v.pause(); v.removeAttribute('src'); v.load(); $('#ed').close(); ed = null; }
+$('#edcancel').onclick = closeEditor;
+$('#ed').oncancel = e => { if ($('#edsave').disabled) e.preventDefault(); else closeEditor(); };
+$('#edsave').onclick = async () => {
+  const body = {lines: [...document.querySelectorAll('#edlines input')].map(x => x.value),
+                context: $('#edctx').value, post: $('#edpost').value};
+  $('#edsave').disabled = true; $('#edcancel').disabled = true;
+  $('#edsave').textContent = 'Merender ulang… (±1 menit)'; $('#ederr').textContent = '';
+  // Let go of the clip so Windows allows replacing the file.
+  document.querySelectorAll('video').forEach(v => { v.pause(); v.removeAttribute('src'); v.load(); });
+  try {
+    const r = await fetch(`/api/jobs/${ed.job}/clips/${ed.index}/captions`, {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body)});
+    const d = await r.json();
+    if (!r.ok) throw new Error(d.error || r.status);
+    $('#edcancel').disabled = false;
+    closeEditor();
+    showClips(d.job);
+  } catch (e) {
+    $('#ederr').textContent = 'Gagal: ' + e.message;
+    $('#edsave').disabled = false; $('#edcancel').disabled = false; $('#edsave').textContent = 'Simpan & render ulang';
+    fetch('/api/jobs/' + ed.job).then(r => r.json()).then(showClips);
+  }
+};
+
+// --- earlier results ---------------------------------------------------------
+async function loadPast() {
+  const jobs = (await (await fetch('/api/jobs')).json()).filter(j => j.state === 'selesai' && j.clips.length);
+  $('#pastcard').classList.toggle('hidden', !jobs.length);
+  const ul = $('#past'); ul.innerHTML = '';
+  jobs.forEach(j => {
+    const li = document.createElement('li');
+    const d = j.id.replace(/^(\d{4})(\d\d)(\d\d)-(\d\d)(\d\d).*/, '$3/$2/$1 $4:$5');
+    li.innerHTML = '<span class="nm"></span><button class="small">Buka</button>';
+    li.querySelector('.nm').textContent = `${d} · ${j.clips.length} klip · ${j.source || ''}`;
+    li.querySelector('button').onclick = () => {
+      jobId = j.id; $('#job').classList.remove('hidden'); $('#job').scrollIntoView({behavior:'smooth'}); poll();
+    };
+    ul.appendChild(li);
+  });
+}
+loadPast();
 $('#folder').onclick = () => fetch(`/api/jobs/${jobId}/open`, {method:'POST'});
 </script>
 </body>

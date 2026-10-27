@@ -317,3 +317,58 @@ def test_software_encoder_where_no_hardware_one_is_listed(monkeypatch):
         assert effects.video_encoder_args(20, "veryfast")[:2] == ["-c:v", "libx264"]
     finally:
         effects.hardware_encoder.cache_clear()
+
+
+# --- subtitle editor ----------------------------------------------------------
+
+def test_edited_lines_keep_timing_or_share_the_line():
+    words = captions.clip_words(TRANSCRIPT, 12.5, 40.0)
+    lines = captions.edit_blocks(words)
+    assert " ".join(l["text"] for l in lines).split() == [w["word"] for w in words]
+    assert all(len(l["words"]) <= 8 for l in lines) and len(lines) >= 3
+    first, second = lines[0], lines[1]
+    fixed = captions.apply_edits([dict(first, text=first["text"].replace("Abangnya", "Abangnye")),
+                                  dict(second, text="gue nangis beneran sumpah wkwk"),
+                                  dict(lines[2], text="  ")])
+    n = len(first["words"])
+    assert fixed[0]["word"] == "Abangnye" and fixed[0]["start"] == first["words"][0]["start"]
+    assert [w["end"] for w in fixed[:n]] == [w["end"] for w in first["words"]]
+    rest = fixed[n:]
+    assert [w["word"] for w in rest] == ["gue", "nangis", "beneran", "sumpah", "wkwk"]
+    assert rest[0]["start"] == pytest.approx(second["start"])
+    assert all(a["end"] == pytest.approx(b["start"]) for a, b in zip(rest, rest[1:]))
+    assert rest[-1]["end"] >= second["end"] - 1e-6
+
+
+@pytest.mark.skipif(not shutil.which("ffmpeg"), reason="needs ffmpeg")
+def test_save_edits_rerenders_with_the_corrected_words(tmp_path):
+    import json
+    src = tmp_path / "src.mp4"
+    subprocess.run(["ffmpeg", "-v", "error", "-f", "lavfi", "-i", "testsrc=size=640x360:rate=30",
+                    "-f", "lavfi", "-i", "sine=frequency=220", "-t", "8", "-shortest",
+                    "-c:v", "libx264", "-preset", "ultrafast", "-c:a", "aac", str(src)], check=True)
+    tr = {"segments": [_seg(0.5, 4.0, "Anjir lucu banget sumpah")]}
+    clip = {"start": 0.0, "end": 6.0, "punchlines": [3.0], "file": "funny_01.mp4",
+            "title": "t", "caption": "c", "hashtags": ["#a"], "context_text": "Saya: tes",
+            "funny_score": 8}
+    (tmp_path / "transcript.json").write_text(json.dumps(tr))
+    (tmp_path / "funny_clips.json").write_text(json.dumps({"source": "src.mp4", "clips": [clip]}))
+    (tmp_path / "render.json").write_text(json.dumps(
+        {"source": str(src), "size": [640, 360], "options": {"keep_ass": True}}))
+    (tmp_path / "funny_01.mp4").write_bytes(b"old")
+
+    d = pipeline.caption_lines(str(tmp_path), 1)
+    assert d["context"] == "Saya: tes" and d["lines"]
+    texts = [l["text"] for l in d["lines"]]
+    assert not pipeline.save_edits(str(tmp_path), 1, texts, post="judul baru")
+    assert (tmp_path / "funny_01.txt").read_text() == "judul baru\n"
+
+    texts[0] = texts[0].replace("Anjir", "Anjay")
+    assert pipeline.save_edits(str(tmp_path), 1, texts, "Saya: diedit", log=lambda *_: None)
+    w, h, dur = pipeline.probe(str(tmp_path / "funny_01.mp4"))
+    assert (w, h) == (1080, 1920) and not (tmp_path / "funny_01.new.mp4").exists()
+    assert "ANJAY" in (tmp_path / "funny_01.new.ass").read_text()
+    again = pipeline.caption_lines(str(tmp_path), 1)
+    assert again["lines"][0]["text"].startswith("Anjay") and again["context"] == "Saya: diedit"
+    with pytest.raises(ValueError):
+        pipeline.save_edits(str(tmp_path), 1, texts[:-1] if len(texts) > 1 else texts + ["x"])

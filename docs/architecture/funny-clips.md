@@ -61,6 +61,16 @@ write to `output/web/<job id>/`, and `/files/<job>/funny_NN.mp4` serves the
 clips with Range support (Safari will not play a video without it). Facecam
 for the stream layout is a corner + size pick (`webapp.facecam_spec`).
 
+Subtitle editor: each clip card has "Edit subtitle". `pipeline.caption_lines`
+gives phrase-sized lines (`captions.edit_blocks`), the context line and the
+post text; `pipeline.save_edits` turns edited lines back into timed words
+(`captions.apply_edits`: same word count keeps each word's timing, otherwise
+the line's time is shared by length), re-renders into `funny_NN.new.mp4` and
+swaps it in (retrying while Windows still has the old file open), and keeps
+the words in `funny_NN.edit.json`. A run writes `render.json` (source, size,
+options) and always `transcript.json` so this works after a restart; finished
+jobs on disk are listed under "Hasil sebelumnya" (`webapp.load_finished_jobs`).
+
 ## Mac
 
 `scripts/setup_mac.sh` installs ffmpeg/python/ollama with Homebrew, the deps
