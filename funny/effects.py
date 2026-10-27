@@ -15,6 +15,10 @@ plain FFmpeg filters, so it runs on any build with libass.
 """
 from __future__ import annotations
 
+import functools
+import os
+import subprocess
+import sys
 from dataclasses import dataclass, field
 from typing import List
 
@@ -155,6 +159,46 @@ def reframe_filters(src_w, src_h, mode="blur", facecam=None, takeover=None):
             f"[bg][fg]overlay=(W-w)/2:(H-h)/2,setsar=1,fps={FPS}[base]")
 
 
+# Hardware H.264 encoders worth trying per platform, with settings that keep
+# a 1080x1920 meme edit clean (~8 Mb/s). libx264 is the fallback everywhere.
+HW_ENCODERS = {
+    "darwin": [("h264_videotoolbox", ["-b:v", "8M", "-maxrate", "12M", "-allow_sw", "1"])],
+    "win32": [("h264_amf", ["-quality", "quality", "-rc", "vbr_peak", "-b:v", "8M", "-maxrate", "12M"]),
+              ("h264_nvenc", ["-preset", "p5", "-cq", "21", "-b:v", "0"]),
+              ("h264_qsv", ["-global_quality", "22"])],
+}
+
+
+@functools.lru_cache(maxsize=1)
+def hardware_encoder():
+    """``(name, args)`` of the first hardware encoder that really encodes here, or None.
+
+    Listed in ``ffmpeg -encoders`` is not enough (AMF is compiled into every
+    Windows build, GPU or not), so each candidate encodes one tiny frame.
+    ``FUNNY_VIDEO_ENCODER=libx264`` forces software.
+    """
+    forced = os.environ.get("FUNNY_VIDEO_ENCODER", "").strip()
+    candidates = HW_ENCODERS.get(sys.platform, [])
+    if forced:
+        candidates = [c for c in candidates if c[0] == forced]
+    for name, args in candidates:
+        probe = ["ffmpeg", "-v", "error", "-f", "lavfi", "-i", "color=black:s=256x256:d=0.1",
+                 "-frames:v", "1", "-c:v", name, *args, "-f", "null", "-"]
+        try:
+            if subprocess.run(probe, capture_output=True, timeout=20).returncode == 0:
+                return name, args
+        except (OSError, subprocess.TimeoutExpired):
+            pass
+    return None
+
+
+def video_encoder_args(crf=20, preset="veryfast"):
+    hw = hardware_encoder()
+    if hw:
+        return ["-c:v", hw[0], *hw[1]]
+    return ["-c:v", "libx264", "-preset", preset, "-crf", str(crf)]
+
+
 def _escape_path(path):
     return path.replace("\\", "/").replace(":", "\\:").replace("'", "\\'")
 
@@ -214,6 +258,6 @@ def build_command(src, start, end, out, plan_: EditPlan, src_size, ass_path=None
 
     args += ["-filter_complex", ";".join(graph), "-map", "[v]", "-map", "[a]",
              "-t", f"{duration:.3f}",
-             "-c:v", "libx264", "-preset", preset, "-crf", str(crf),
+             *video_encoder_args(crf, preset),
              "-c:a", "aac", "-b:a", "160k", "-movflags", "+faststart", out]
     return args

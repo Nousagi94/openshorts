@@ -26,7 +26,18 @@ if (-not (Get-Command winget -ErrorAction SilentlyContinue)) {
 }
 
 $ramGB = [math]::Round((Get-CimInstance Win32_ComputerSystem).TotalPhysicalMemory / 1GB)
-$model = if ($env:FUNNY_LLM_MODEL) { $env:FUNNY_LLM_MODEL } elseif ($ramGB -lt 12) { 'qwen2.5:3b' } else { 'qwen2.5:7b' }
+# Dedicated VRAM from the display-adapter registry keys (Win32_VideoController
+# caps AdapterRAM at 4 GB). Ollama runs on NVIDIA and recent AMD Radeon cards
+# by itself, so a 12 GB+ card can hold the stronger 14B model.
+$vramGB = 0
+Get-ChildItem 'HKLM:\SYSTEM\ControlSet001\Control\Class\{4d36e968-e325-11ce-bfc1-08002be10318}' -ErrorAction SilentlyContinue | ForEach-Object {
+    $v = (Get-ItemProperty $_.PSPath -Name 'HardwareInformation.qwMemorySize' -ErrorAction SilentlyContinue).'HardwareInformation.qwMemorySize'
+    if ($v) { $vramGB = [math]::Max($vramGB, [math]::Round($v / 1GB)) }
+}
+$model = if ($env:FUNNY_LLM_MODEL) { $env:FUNNY_LLM_MODEL }
+         elseif ($vramGB -ge 12) { 'qwen2.5:14b' }
+         elseif ($ramGB -lt 12) { 'qwen2.5:3b' }
+         else { 'qwen2.5:7b' }
 
 Write-Host '==> ffmpeg, python, ollama'
 Update-PathFromRegistry
@@ -44,7 +55,7 @@ if (-not (Test-Path '.venv\Scripts\python.exe')) { & py -3.12 -m venv .venv }
 & .venv\Scripts\python.exe -c "import faster_whisper, numpy, pydantic"
 if ($LASTEXITCODE -ne 0) { throw 'Paket Python gagal dipasang.' }
 
-Write-Host "==> Model AI lokal ($model, RAM $ramGB GB)"
+Write-Host "==> Model AI lokal ($model, RAM $ramGB GB, VRAM $vramGB GB)"
 try { Invoke-WebRequest -UseBasicParsing http://127.0.0.1:11434 -TimeoutSec 3 | Out-Null }
 catch { Start-Process ollama -ArgumentList 'serve' -WindowStyle Hidden; Start-Sleep -Seconds 4 }
 & ollama pull $model

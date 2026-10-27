@@ -82,6 +82,18 @@ robocopy. The `.bat` files are stored CRLF and marked `-text` in
 SetThreadExecutionState there. The `.ps1` stays ASCII: Windows PowerShell 5.1
 reads BOM-less files as ANSI.
 
+## GPU use
+
+- The moment picker runs in Ollama, which uses NVIDIA, recent AMD Radeon
+  (ROCm on Windows, e.g. RX 7900) and Apple GPUs by itself. The Windows setup
+  pulls `qwen2.5:14b` when the card has 12 GB+ VRAM (read from the display
+  adapter registry keys).
+- Encoding: `effects.hardware_encoder` probes VideoToolbox (Mac), AMF, NVENC
+  and QSV (Windows) by encoding one frame, and falls back to libx264;
+  `FUNNY_VIDEO_ENCODER=libx264` forces software.
+- Transcription on Windows is CPU faster-whisper (CTranslate2 has no AMD
+  backend). A whisper.cpp Vulkan backend would put it on a Radeon; not done.
+
 ## Tests
 
 `tests/test_funny.py` covers detection on synthetic audio, moment cleaning and

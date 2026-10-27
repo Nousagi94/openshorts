@@ -308,3 +308,12 @@ def test_long_transcript_goes_to_the_model_in_pieces(monkeypatch):
                                     progress=seen.append)
     assert len(calls) == len(pieces) and seen[-1] == 1.0
     assert len(found) == 1  # the same joke from two pieces collapses to one
+
+
+def test_software_encoder_where_no_hardware_one_is_listed(monkeypatch):
+    monkeypatch.setattr(effects.sys, "platform", "linux")
+    effects.hardware_encoder.cache_clear()
+    try:
+        assert effects.video_encoder_args(20, "veryfast")[:2] == ["-c:v", "libx264"]
+    finally:
+        effects.hardware_encoder.cache_clear()
