@@ -267,3 +267,44 @@ def test_options_from_form():
     assert opts["facecam"].startswith("0.000,0.600") and opts["style"] == "meme"
     assert opts["music"] is False and kw["max_clips"] == 10
     assert kw["start"] == 60 and kw["end"] is None
+
+
+def test_transcription_progress_is_read_from_tqdm_and_whisper_lines(monkeypatch):
+    import io
+    import sys
+    import types
+    seen, logged = [], []
+
+    def fake_media(path, language=None):
+        sys.stderr.write("\r 37%|####      | 4412/11941 [01:02<02:00]")
+        print("🎙️ Transcribing… 75% (12s)")
+        print("⚠️ [ASR] mlx-whisper failed (ImportError) — falling back to whisper")
+        return {"segments": []}
+    fake = types.SimpleNamespace(transcribe_media=fake_media, release_models=lambda: None)
+    monkeypatch.setitem(sys.modules, "transcribe_backends", fake)
+    monkeypatch.setattr(sys, "stdout", io.StringIO())
+    monkeypatch.setattr(sys, "stderr", io.StringIO())
+    pipeline.transcribe("x.mp4", log=logged.append,
+                        progress=lambda stage, f=None, *a: seen.append((stage, f)))
+    assert ("transkripsi", 0.37) in seen and ("transkripsi", 0.75) in seen
+    assert any("[ASR]" in line for line in logged)
+
+
+def test_long_transcript_goes_to_the_model_in_pieces(monkeypatch):
+    monkeypatch.setenv("FUNNY_CHUNK_CHARS", "120")
+    pieces = moments.transcript_chunks(TRANSCRIPT, 120)
+    assert len(pieces) > 1
+    assert pieces[0]["segments"][-1] is pieces[1]["segments"][0]  # shared boundary
+    calls = []
+
+    def fake(prompt):
+        calls.append(prompt)
+        return {"moments": [{"start": 5.5, "end": 21.0, "punchlines": [19.0],
+                             "funny_score": 60 + len(calls), "title": "t", "caption": "c",
+                             "hashtags": [], "meme_text": ""}]}, "fake"
+    monkeypatch.setattr(moments, "_call_model", fake)
+    seen = []
+    found, _ = moments.find_moments(TRANSCRIPT, [], 40.0, log=lambda *_: None,
+                                    progress=seen.append)
+    assert len(calls) == len(pieces) and seen[-1] == 1.0
+    assert len(found) == 1  # the same joke from two pieces collapses to one

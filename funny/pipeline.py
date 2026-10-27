@@ -13,7 +13,9 @@ from __future__ import annotations
 import json
 import os
 import platform
+import re
 import subprocess
+import sys
 import time
 
 from . import captions, effects, laughter, moments as moments_mod, music, synth
@@ -25,7 +27,7 @@ STAGES = (("download", "Download / ambil video"), ("transkripsi", "Ubah suara ja
 
 # Rough transcription speed (seconds of audio per second of work), only used
 # to give the progress bar an estimate: mlx on an M-series GPU vs CPU whisper.
-ASR_SPEED = {"mlx": 12.0, "cpu": 3.0}
+ASR_SPEED = {"mlx": 6.0, "cpu": 2.0}
 
 
 def _no_progress(stage, fraction=None, detail=None, eta=None):
@@ -111,16 +113,55 @@ def asr_eta(duration):
     return 15 + duration / ASR_SPEED["mlx" if backend == "mlx" else "cpu"]
 
 
-def transcribe(path, language="id", log=print):
+class _ProgressTee:
+    """Pass a stream through while reading transcription progress out of it.
+
+    mlx-whisper draws a tqdm bar on stderr ("37%|####  | ..."), faster-whisper
+    prints "Transcribing… 25%" on stdout, and transcribe_backends reports a
+    backend fallback as an "[ASR]" line; the first two become real progress,
+    the last goes into the job log.
+    """
+
+    _PCT = re.compile(r"(\d{1,3})%(?:\||\s*\()")
+
+    def __init__(self, stream, progress, log):
+        self.stream, self.progress, self.log = stream, progress, log
+        self.last = -1
+
+    def write(self, text):
+        self.stream.write(text)
+        for m in self._PCT.finditer(text):
+            pct = int(m.group(1))
+            if pct != self.last and pct < 100:
+                self.last = pct
+                self.progress("transkripsi", pct / 100.0)
+        if "[ASR]" in text:
+            self.log(text.strip())
+        return len(text)
+
+    def flush(self):
+        self.stream.flush()
+
+    def isatty(self):
+        return False
+
+    def __getattr__(self, name):
+        return getattr(self.stream, name)
+
+
+def transcribe(path, language="id", log=print, progress=_no_progress):
     # On an M-series Mac whisper runs on the GPU through MLX unless the
     # user chose a backend; transcribe_backends falls back to CPU by itself.
     if apple_silicon() and not os.environ.get("TRANSCRIBE_BACKEND"):
         os.environ["TRANSCRIBE_BACKEND"] = "mlx"
     import transcribe_backends
     log(f"🎙️ Transkripsi ({language or 'auto'})…")
+    out, err = sys.stdout, sys.stderr
+    sys.stdout, sys.stderr = _ProgressTee(out, progress, log), _ProgressTee(err, progress, log)
     try:
         return transcribe_backends.transcribe_media(path, language=language)
     finally:
+        sys.stdout, sys.stderr = out, err
         transcribe_backends.release_models()
 
 
@@ -237,7 +278,7 @@ def run(source, out_dir, transcript=None, language="id", max_clips=5, use_model=
 
     if transcript is None:
         progress("transkripsi", None, f"video {duration / 60:.0f} menit", asr_eta(duration))
-        transcript = transcribe(source, language, log)
+        transcript = transcribe(source, language, log, progress)
         with open(os.path.join(out_dir, "transcript.json"), "w", encoding="utf-8") as f:
             json.dump(transcript, f, ensure_ascii=False)
 
@@ -250,8 +291,9 @@ def run(source, out_dir, transcript=None, language="id", max_clips=5, use_model=
     progress("tawa", 1.0, f"{len(events)} momen tawa terdengar")
     progress("ai", None, "membaca transkrip", 30 + words / 40)
 
-    found, laughs = moments_mod.find_moments(transcript, events, duration, max_clips,
-                                             use_model=use_model, log=log)
+    found, laughs = moments_mod.find_moments(
+        transcript, events, duration, max_clips, use_model=use_model, log=log,
+        progress=lambda f: progress("ai", min(f, 0.99)))
     progress("ai", 1.0, f"{len(found)} momen dipilih")
     if not found:
         log("🤷 Tidak ada momen lucu yang terdeteksi.")

@@ -61,23 +61,34 @@ def load_audio(media_path: str, sample_rate: int = SAMPLE_RATE) -> np.ndarray:
 
 
 def _frames(audio: np.ndarray) -> np.ndarray:
+    """Overlapping frames as a strided view: no copy, whatever the length."""
     if len(audio) < FRAME:
         audio = np.pad(audio, (0, FRAME - len(audio)))
     n = 1 + (len(audio) - FRAME) // HOP
-    idx = np.arange(FRAME)[None, :] + HOP * np.arange(n)[:, None]
-    return audio[idx]
+    return np.lib.stride_tricks.as_strided(
+        audio, shape=(n, FRAME), strides=(audio.strides[0] * HOP, audio.strides[0]),
+        writeable=False)
 
 
-def frame_features(audio: np.ndarray):
-    """Per-frame (rms_db, flatness) at 100 frames per second."""
-    frames = _frames(audio) * np.hanning(FRAME)[None, :]
-    rms = np.sqrt(np.mean(frames ** 2, axis=1) + 1e-12)
-    rms_db = 20 * np.log10(rms + 1e-9)
-    spec = np.abs(np.fft.rfft(frames, axis=1)) + 1e-9
-    # 300 Hz - 4 kHz: where laughter and speech differ, without hum or hiss.
+def frame_features(audio: np.ndarray, block_frames: int = 6000):
+    """Per-frame (rms_db, flatness) at 100 frames per second.
+
+    Computed in blocks of ``block_frames`` (60 s): a 3-hour stream framed in
+    one go is ~1.2M x 400 samples, several GB once windowed and FFT'd.
+    """
+    frames_all = _frames(audio)
+    window = np.hanning(FRAME).astype(np.float32)
     lo, hi = int(300 * FRAME / SAMPLE_RATE), int(4000 * FRAME / SAMPLE_RATE)
-    band = spec[:, lo:hi]
-    flatness = np.exp(np.mean(np.log(band), axis=1)) / np.mean(band, axis=1)
+    rms_db = np.empty(len(frames_all), dtype=np.float32)
+    flatness = np.empty(len(frames_all), dtype=np.float32)
+    for a in range(0, len(frames_all), block_frames):
+        frames = frames_all[a:a + block_frames] * window[None, :]
+        rms = np.sqrt(np.mean(frames ** 2, axis=1) + 1e-12)
+        rms_db[a:a + len(frames)] = 20 * np.log10(rms + 1e-9)
+        # 300 Hz - 4 kHz: where laughter and speech differ, without hum or hiss.
+        band = np.abs(np.fft.rfft(frames, axis=1))[:, lo:hi] + 1e-9
+        flatness[a:a + len(frames)] = (np.exp(np.mean(np.log(band), axis=1))
+                                       / np.mean(band, axis=1))
     return rms_db, flatness
 
 

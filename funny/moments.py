@@ -269,21 +269,80 @@ def clean_model_moments(raw, transcript, duration, max_clips):
     return dedupe(out, max_clips)
 
 
+def chunk_chars():
+    """Transcript characters per model call.
+
+    A local model behind Ollama reads ~4-8k tokens; a longer prompt is cut
+    silently and the answer is garbage. ~9k characters of transcript (~3k
+    tokens) plus the instructions fits. Gemini reads the whole thing.
+    """
+    raw = os.environ.get("FUNNY_CHUNK_CHARS")
+    if raw and raw.isdigit():
+        return int(raw)
+    try:
+        import llm_backend
+        local = llm_backend.active()
+    except Exception:
+        local = False
+    return 9000 if local else 120000
+
+
+def transcript_chunks(transcript, max_chars):
+    """Consecutive pieces of the transcript, each rendering under ``max_chars``.
+
+    Consecutive pieces share their boundary sentence, so a joke that straddles
+    the cut is still whole in one of them.
+    """
+    segs = (transcript or {}).get("segments", [])
+    chunks, cur, size = [], [], 0
+    for seg in segs:
+        n = len(seg.get("text", "")) + 20
+        if cur and size + n > max_chars:
+            chunks.append(cur)
+            cur, size = cur[-1:], len(cur[-1].get("text", "")) + 20
+        cur.append(seg)
+        size += n
+    if cur:
+        chunks.append(cur)
+    return [dict(transcript, segments=c) for c in chunks]
+
+
 def find_moments(transcript, audio_events, duration, max_clips=DEFAULT_MAX_CLIPS,
-                 use_model=True, log=print):
-    """The funny moments of a video, best effort, never raising on the model."""
+                 use_model=True, log=print, progress=None):
+    """The funny moments of a video, best effort, never raising on the model.
+
+    A long transcript goes to the model in pieces (``transcript_chunks``);
+    each piece proposes its best moments and the global best ``max_clips``
+    survive ``dedupe``. ``progress(fraction)`` is called after each piece.
+    """
     laughs = merge_laughs([e if isinstance(e, dict) else e.to_dict() for e in audio_events],
                           transcript_cues(transcript))
     if use_model and (transcript or {}).get("segments"):
-        try:
-            raw, provider = _call_model(build_prompt(transcript, laughs, duration, max_clips))
-            if raw is not None:
-                moments = clean_model_moments(raw, transcript, duration, max_clips)
-                log(f"🤖 {provider}: {len(moments)} momen lucu")
-                if moments:
-                    return moments, laughs
-            else:
+        pieces = transcript_chunks(transcript, chunk_chars())
+        per_piece = max_clips if len(pieces) == 1 else max(2, min(max_clips, 3))
+        found, provider = [], None
+        if len(pieces) > 1:
+            log(f"🤖 Transkrip panjang: dibaca AI dalam {len(pieces)} bagian")
+        for i, piece in enumerate(pieces, 1):
+            segs = piece["segments"]
+            lo, hi = segs[0]["start"] - 5, segs[-1]["end"] + 5
+            piece_laughs = [m for m in laughs if lo <= m["t"] <= hi]
+            try:
+                raw, provider = _call_model(build_prompt(piece, piece_laughs, duration, per_piece))
+            except Exception as e:
+                log(f"⚠️ Model gagal di bagian {i} ({type(e).__name__}: {str(e)[:160]})")
+                continue
+            if raw is None:
                 log(f"ℹ️ Model dilewati ({provider}), pakai deteksi tawa saja")
-        except Exception as e:
-            log(f"⚠️ Model gagal ({type(e).__name__}: {str(e)[:160]}), pakai deteksi tawa saja")
+                break
+            found += clean_model_moments(raw, transcript, duration, per_piece)
+            if progress:
+                progress(i / len(pieces))
+        moments = dedupe(found, max_clips)
+        if provider and found:
+            log(f"🤖 {provider}: {len(moments)} momen lucu")
+        if moments:
+            return moments, laughs
+        if provider and not found:
+            log("ℹ️ Model tidak memberi momen, pakai deteksi tawa saja")
     return heuristic_moments(laughs, transcript, duration, max_clips), laughs

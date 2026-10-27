@@ -238,12 +238,18 @@ function renderStages(stages) {
     if (st.state === 'jalan') {
       if (st.fraction != null) {
         bar = `<div class="bar"><i style="width:${Math.round(st.fraction * 100)}%"></i></div>`;
-        time = Math.round(st.fraction * 100) + '% · ' + time;
+        const pct = Math.round(st.fraction * 100);
+        const left = st.fraction > 0.02 ? st.elapsed * (1 - st.fraction) / st.fraction : null;
+        time = pct + '%' + (left != null && left > 5 ? ` · sisa ~${dur(left)}` : '') + ' · ' + time;
       } else if (st.eta) {
-        const f = Math.min(0.95, st.elapsed / st.eta);
         const left = st.eta - st.elapsed;
-        bar = `<div class="bar"><i style="width:${Math.round(f * 100)}%"></i></div>`;
-        time = left > 20 ? `perkiraan sisa ~${dur(left)}` : 'hampir selesai…';
+        if (left > 0) {
+          bar = `<div class="bar"><i style="width:${Math.round(100 * st.elapsed / st.eta)}%"></i></div>`;
+          time = `perkiraan sisa ~${dur(left)} · ${dur(st.elapsed)}`;
+        } else {
+          bar = '<div class="bar indet"><i></i></div>';
+          time = `lebih lama dari perkiraan, masih berjalan · ${dur(st.elapsed)}`;
+        }
       } else bar = '<div class="bar indet"><i></i></div>';
     }
     li.innerHTML = `<span class="ic">${icon}</span><span class="nm"></span><span class="tm">${time}</span>`
