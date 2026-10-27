@@ -13,7 +13,11 @@ berbayar.
    (setelah pull request di-merge: tombol **Code**, lalu **Download ZIP** di halaman repo).
 2. Klik dua kali file ZIP-nya, lalu pindahkan folder hasilnya ke folder Home kamu.
 3. Buka folder itu. **Klik kanan** `Install.command`, pilih **Open**, lalu **Open** lagi.
-   Klik kanan diperlukan karena macOS menahan file dari internet saat pertama kali dibuka.
+   Kalau muncul "Install.command Not Opened": klik **Done**, buka **System Settings** >
+   **Privacy & Security**, scroll ke bagian Security, klik **Open Anyway**, lalu masukkan
+   password Mac. (macOS menahan file dari internet yang tidak ditandatangani Apple.)
+   Alternatif sekali jalan untuk seluruh folder, di Terminal:
+   `xattr -dr com.apple.quarantine ` lalu seret folder openshorts ke Terminal, Enter.
    Masukkan password Mac kalau diminta (ketikannya memang tidak terlihat), lalu tunggu
    sampai muncul "Instalasi selesai" (20-40 menit).
 4. Untuk memakai: klik dua kali `Auto Klip Lucu.command` (pertama kali: klik kanan, lalu
