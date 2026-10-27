@@ -100,6 +100,11 @@ klip bisa di-mute atau diklaim. Jadi:
 
 ## 5. Kalau ada masalah
 
+- **Proses terhenti saat laptop tidur atau layar ditutup:** Mac yang tidur menghentikan
+  proses. Selama proses berjalan, aplikasi sudah mencegah Mac tidur sendiri, tapi
+  **jangan tutup layar laptop**. Colok charger untuk video panjang. Kalau terlanjur
+  terhenti, klik **Buat Klip** lagi.
+
 - **AI tidak jalan / tidak ada Ollama:** sistem tetap jalan dan memotong
   di sekitar suara tawa saja. Jalankan `ollama serve` lalu coba lagi.
 - **Download link gagal:** update yt-dlp: `.venv/bin/pip install -U yt-dlp`.

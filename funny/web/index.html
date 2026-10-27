@@ -215,7 +215,7 @@ async function poll() {
   $('#stat').textContent = done ? `Selesai, ${j.clips.length} klip` : bad ? 'Gagal'
     : j.state === 'antri' ? 'Menunggu giliran…'
     : cur >= 0 ? `Tahap ${cur + 1} dari ${j.stages.length}: ${j.stages[cur].label}` : 'Memulai…';
-  $('#elapsed').textContent = bad ? j.error : `Total waktu berjalan: ${dur(j.elapsed)}${done ? '' : ' · biarkan halaman dan jendela Terminal tetap terbuka'}`;
+  $('#elapsed').textContent = bad ? j.error : `Total waktu berjalan: ${dur(j.elapsed)}${done ? '' : ' · biarkan jendela Terminal terbuka dan jangan tutup layar laptop (colok charger untuk video panjang)'}`;
   renderStages(j.stages);
   const log = $('#log'); log.textContent = j.log.join('\n'); log.scrollTop = log.scrollHeight;
   if (done) { showClips(j); $('#go').disabled = false; $('#folderwrap').classList.remove('hidden'); return; }

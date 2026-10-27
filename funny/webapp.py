@@ -142,7 +142,7 @@ class Jobs:
         return job
 
     def _run(self, job):
-        with self.gate:
+        with self.gate, keep_awake():
             job.state = "jalan"
             try:
                 summary = pipeline.run(job.source, job.dir, options=job.options,
@@ -165,6 +165,28 @@ class Jobs:
 
 
 JOBS = Jobs()
+
+
+class keep_awake:
+    """Stop the Mac from idle-sleeping while a job runs (``caffeinate -i``).
+
+    A sleeping Mac pauses the job and drops the download connection, so a
+    long run left alone would stall. Closing the lid still sleeps the Mac;
+    the page says so. No-op off macOS.
+    """
+
+    def __enter__(self):
+        self.proc = None
+        if sys.platform == "darwin":
+            try:
+                self.proc = subprocess.Popen(["caffeinate", "-i", "-w", str(os.getpid())])
+            except OSError:
+                pass
+        return self
+
+    def __exit__(self, *exc):
+        if self.proc:
+            self.proc.terminate()
 
 
 def open_folder(path):
