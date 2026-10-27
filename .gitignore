@@ -49,3 +49,10 @@ skills-lock.json
 
 # Instrucciones locales con datos de infra (repo público)
 CLAUDE.local.md
+
+# Funny clips: creator-supplied audio stays local
+assets/music/*
+!assets/music/README.md
+!assets/music/manifest.json
+assets/sfx/*
+!assets/sfx/README.md

@@ -18,7 +18,10 @@ Invariants the consumers rely on (clip cutting, karaoke subtitles, Remotion):
   - all numerics are native Python floats (json.dump of the transcript).
   - words sorted by start, segments chronological, absolute file timestamps.
 
-TRANSCRIBE_BACKEND env: "whisper" (default) | "parakeet".
+TRANSCRIBE_BACKEND env: "whisper" (default) | "parakeet" | "mlx".
+"mlx" runs whisper on the Apple Silicon GPU through mlx-whisper (Mac only,
+``pip install mlx-whisper``; model from MLX_WHISPER_MODEL) and falls back to
+faster-whisper on CPU when it is missing or fails.
 The parakeet path falls back to whisper automatically when the model errors,
 produces no usable words, or the detected language is outside its 25
 supported European languages (e.g. Japanese/Chinese/Arabic uploads).
@@ -226,8 +229,13 @@ def run_whisper_transcription(media_path, **params):
         return _run_whisper_once(media_path, **params)
 
 
-def _transcribe_with_whisper(media_path):
-    segments, info = run_whisper_transcription(media_path, **WHISPER_TRANSCRIBE_PARAMS)
+def _transcribe_with_whisper(media_path, language=None):
+    params = dict(WHISPER_TRANSCRIBE_PARAMS)
+    if language:
+        # Pinning the language skips detection, which mislabels casual
+        # Indonesian as Malay often enough to garble slang and laughter.
+        params["language"] = language
+    segments, info = run_whisper_transcription(media_path, **params)
 
     out_segments = []
     text_parts = []
@@ -249,6 +257,30 @@ def _transcribe_with_whisper(media_path):
         "language": info.language,
         "segments": out_segments,
     }
+
+
+# --- mlx (Apple Silicon) ----------------------------------------------------
+
+MLX_WHISPER_MODEL = os.environ.get("MLX_WHISPER_MODEL",
+                                   "mlx-community/whisper-large-v3-turbo")
+
+
+def _transcribe_with_mlx(media_path, language=None):
+    import mlx_whisper  # Mac-only dependency, imported on demand
+
+    result = mlx_whisper.transcribe(
+        media_path, path_or_hf_repo=MLX_WHISPER_MODEL, word_timestamps=True,
+        condition_on_previous_text=False, language=language)
+    out_segments = []
+    for seg in result.get("segments", []):
+        words = [{"word": w["word"], "start": float(w["start"]), "end": float(w["end"])}
+                 for w in seg.get("words") or []]
+        out_segments.append({"start": float(seg["start"]), "end": float(seg["end"]),
+                             "text": seg.get("text", ""),
+                             "words": merge_continuation_words(words)})
+    return {"text": (result.get("text") or "").strip(),
+            "language": result.get("language") or language or "",
+            "segments": out_segments}
 
 
 # --- parakeet ---------------------------------------------------------------
@@ -647,8 +679,11 @@ def _has_audio_stream(media_path) -> bool:
         return True  # probe failed — don't block, let the backend try
 
 
-def transcribe_media(media_path):
-    """Transcribe with the configured backend, falling back to whisper."""
+def transcribe_media(media_path, language=None):
+    """Transcribe with the configured backend, falling back to whisper.
+
+    ``language`` (ISO 639-1) pins whisper's language; parakeet ignores it.
+    """
     # Silent videos (AI-generated clips, muted screen recordings) have no audio
     # stream; every ASR backend then crashes deep inside libav with an opaque
     # "tuple index out of range". Detect it up front and fail with a clear,
@@ -659,6 +694,18 @@ def transcribe_media(media_path):
             "speech, so it needs a video with audio.")
 
     backend = os.environ.get("TRANSCRIBE_BACKEND", "whisper").strip().lower()
+
+    if backend == "mlx":
+        try:
+            transcript = _transcribe_with_mlx(media_path, language=language)
+            if any(s["words"] for s in transcript["segments"]):
+                print(f"🎙️ [ASR] mlx-whisper ok: lang={transcript['language']} "
+                      f"segments={len(transcript['segments'])}")
+                return transcript
+            print("⚠️ [ASR] mlx-whisper returned no words — falling back to whisper")
+        except Exception as e:
+            print(f"⚠️ [ASR] mlx-whisper failed ({type(e).__name__}: {e}) — "
+                  f"falling back to whisper")
 
     if backend == "parakeet":
         try:
@@ -674,4 +721,6 @@ def transcribe_media(media_path):
             print(f"⚠️ [ASR] parakeet failed ({type(e).__name__}: {e}) — "
                   f"falling back to whisper")
 
+    if language:
+        return _transcribe_with_whisper(media_path, language=language)
     return _transcribe_with_whisper(media_path)

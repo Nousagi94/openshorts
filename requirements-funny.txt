@@ -1,0 +1,10 @@
+# Funny-clip pipeline (funny_clip.py) without the heavy video stack.
+# Runs on a Mac: `scripts/setup_mac.sh` installs this into .venv.
+numpy
+pydantic>=2
+httpx==0.28.1
+python-dotenv==1.2.2
+yt-dlp
+faster-whisper==1.2.1
+google-genai==1.75.0
+mlx-whisper; sys_platform == "darwin" and platform_machine == "arm64"
