@@ -6,5 +6,7 @@ httpx==0.28.1
 python-dotenv==1.2.2
 yt-dlp
 faster-whisper==1.2.1
+# PyAV 19 dropped open(metadata_errors=...), which faster-whisper 1.2.1 still passes.
+av>=11,<19
 google-genai==1.75.0
 mlx-whisper; sys_platform == "darwin" and platform_machine == "arm64"
