@@ -115,18 +115,27 @@ dialog::backdrop{background:rgba(0,0,0,.55)}
       <div><label for="sampai">Sampai (opsional)</label><input id="sampai" type="text" placeholder="contoh 25:30"></div>
     </div>
     <div class="hint">Kosongkan untuk seluruh video. Untuk video panjang, isi bagian yang seru supaya lebih cepat.</div>
+    <div class="toggles" style="margin-top:12px">
+      <label><input type="checkbox" id="whole"> <span><b>Edit utuh</b>: jadikan rentang ini satu klip penuh, diedit seluruhnya (tanpa dipilih AI)</span></label>
+    </div>
   </section>
 
   <section class="card">
-    <h2>2. Gaya subtitle</h2>
-    <div class="picks" data-group="style">
+    <h2>2. Gaya edit</h2>
+    <div class="picks" data-group="look">
       <button class="pick on" data-v="streamer"><b>Streamer</b><span>Satu kata, biru outline putih. Seperti klip live stream.</span></button>
       <button class="pick" data-v="meme"><b>Meme</b><span>Kapital kuning, kata lucu merah, teks meme besar.</span></button>
+      <button class="pick" data-v="warna"><b>Warna-warni</b><span>Satu kata, warnanya ganti-ganti hijau, putih, kuning, biru.</span></button>
+      <button class="pick" data-v="frasa"><b>Frasa gameplay</b><span>2-3 kata miring putih-kuning, kata kasar tidak disensor.</span></button>
+      <button class="pick" data-v="party"><b>Party</b><span>Lampu disko warna-warni dan kilatan saat momen lucu.</span></button>
+      <button class="pick" data-v="cerita"><b>Meme cerita</b><span>Latar putih dengan judul di atas, suara hening sebelum punchline lalu musik masuk.</span></button>
+      <button class="pick" data-v="bersih"><b>Bersih</b><span>Tanpa subtitle, musik, dan efek. Hanya video dan suara asli.</span></button>
     </div>
   </section>
 
   <section class="card">
     <h2>3. Tampilan video</h2>
+    <div class="hint hidden" id="judulnote" style="margin:-4px 0 10px">Gaya Meme cerita selalu memakai latar putih dengan judul di atas.</div>
     <div class="picks" data-group="layout">
       <button class="pick on" data-v="blur"><b>Utuh + latar blur</b><span>Semua orang tetap kelihatan. Cocok untuk podcast.</span></button>
       <button class="pick" data-v="crop"><b>Penuh layar</b><span>Dipotong di tengah. Cocok untuk satu orang.</span></button>
@@ -145,14 +154,34 @@ dialog::backdrop{background:rgba(0,0,0,.55)}
     <div class="row">
       <div><label for="max">Jumlah klip maksimal</label>
         <select id="max"><option>1</option><option>2</option><option selected>3</option><option>5</option><option>8</option></select></div>
-      <div></div>
+      <div><label for="length">Durasi tiap klip</label>
+        <select id="length"><option value="pendek">Pendek (12-30 detik)</option><option value="sedang" selected>Sedang (30-60 detik)</option><option value="panjang">Panjang (1-2 menit)</option></select></div>
+    </div>
+    <div class="row" style="margin-top:12px">
+      <div><label for="words">Kata per subtitle</label>
+        <select id="words"><option value="auto">Otomatis (ikut gaya)</option><option value="1">1 kata</option><option value="2">2 kata</option><option value="3">3 kata</option></select></div>
     </div>
     <div class="toggles" style="margin-top:12px">
       <label><input type="checkbox" id="music" checked> Musik latar</label>
       <label><input type="checkbox" id="effects" checked> Efek zoom &amp; suara</label>
+      <label><input type="checkbox" id="shake" checked> Getar saat teriak</label>
       <label><input type="checkbox" id="context" checked> Teks konteks di awal</label>
       <label><input type="checkbox" id="captions" checked> Subtitle</label>
+      <label><input type="checkbox" id="censor" checked> Sensor kata kasar</label>
     </div>
+  </section>
+
+  <section class="card">
+    <h2>5. Watermark (opsional)</h2>
+    <div class="row">
+      <div><label for="wmtext">Nama channel</label><input id="wmtext" type="text" placeholder="contoh @anca.klip" maxlength="40"></div>
+      <div><label for="wmpos">Posisi</label>
+        <select id="wmpos"><option value="kanan-atas">Kanan atas</option><option value="kiri-atas">Kiri atas</option><option value="kanan-tengah">Kanan tengah</option><option value="kanan-bawah">Kanan bawah</option><option value="kiri-bawah">Kiri bawah</option></select></div>
+    </div>
+    <div style="margin-top:12px"><label>Logo (opsional, PNG transparan paling bagus)</label>
+      <div class="acts" style="display:flex;gap:8px;align-items:center"><button class="small" id="logobtn" style="flex:0 0 auto">Pilih logo</button><button class="small hidden" id="logodel" style="flex:0 0 auto">Hapus logo</button><span class="hint" id="logoinfo" style="margin:0">Belum ada logo</span></div>
+      <input id="logo" type="file" accept="image/png,image/jpeg,image/webp" class="hidden"></div>
+    <div class="hint">Nama dan logo diingat untuk proses berikutnya.</div>
   </section>
 
   <button class="go" id="go">Buat Klip</button>
@@ -194,7 +223,16 @@ dialog::backdrop{background:rgba(0,0,0,.55)}
 <script>
 const $ = s => document.querySelector(s);
 let src = 'url', upload = null, uploading = false, jobId = null, timer = null;
-const pick = {style:'streamer', layout:'blur'};
+const pick = {look:'streamer', layout:'blur'};
+// What each look turns on by default; the boxes can still be changed after.
+const LOOK_DEFAULTS = {
+  streamer:{music:1,effects:1,captions:1,context:1,censor:1}, meme:{music:1,effects:1,captions:1,context:1,censor:1},
+  warna:{music:1,effects:1,captions:1,context:1,censor:1}, frasa:{music:1,effects:1,captions:1,context:1,censor:0},
+  party:{music:1,effects:1,captions:1,context:1,censor:1}, cerita:{music:1,effects:1,captions:1,context:0,censor:1},
+  bersih:{music:0,effects:0,captions:0,context:0,censor:1},
+};
+const store = {get(k){try{return localStorage.getItem(k)}catch(e){return null}}, set(k,v){try{v==null?localStorage.removeItem(k):localStorage.setItem(k,v)}catch(e){}}};
+let logo = store.get('wm_logo'), logoName = store.get('wm_logo_name');
 
 document.querySelectorAll('.tab').forEach(b => b.onclick = () => {
   document.querySelectorAll('.tab').forEach(x => x.classList.toggle('on', x === b));
@@ -205,8 +243,35 @@ document.querySelectorAll('.tab').forEach(b => b.onclick = () => {
 document.querySelectorAll('.picks').forEach(g => g.querySelectorAll('.pick').forEach(b => b.onclick = () => {
   g.querySelectorAll('.pick').forEach(x => x.classList.toggle('on', x === b));
   pick[g.dataset.group] = b.dataset.v;
+  if (g.dataset.group === 'look') {
+    const d = LOOK_DEFAULTS[pick.look];
+    Object.keys(d).forEach(k => $('#' + k).checked = !!d[k]);
+    $('#judulnote').classList.toggle('hidden', pick.look !== 'cerita');
+  }
   $('#facecam').classList.toggle('hidden', pick.layout !== 'stream');
 }));
+$('#whole').onchange = () => { $('#max').disabled = $('#length').disabled = $('#whole').checked; };
+
+// --- watermark -----------------------------------------------------------------
+$('#wmtext').value = store.get('wm_text') || '';
+$('#wmpos').value = store.get('wm_pos') || 'kanan-atas';
+$('#wmtext').oninput = () => store.set('wm_text', $('#wmtext').value);
+$('#wmpos').onchange = () => store.set('wm_pos', $('#wmpos').value);
+function showLogo() {
+  $('#logoinfo').textContent = logo ? '✓ ' + (logoName || 'logo') : 'Belum ada logo';
+  $('#logodel').classList.toggle('hidden', !logo);
+}
+showLogo();
+$('#logobtn').onclick = () => $('#logo').click();
+$('#logodel').onclick = () => { logo = null; store.set('wm_logo', null); store.set('wm_logo_name', null); showLogo(); };
+$('#logo').onchange = async e => {
+  const f = e.target.files[0]; if (!f) return;
+  $('#logoinfo').textContent = 'Menyimpan ' + f.name + '…';
+  const r = await fetch('/api/upload', {method:'POST', headers:{'X-Filename': encodeURIComponent(f.name)}, body: f});
+  const d = await r.json();
+  if (!r.ok) { $('#logoinfo').textContent = 'Gagal: ' + (d.error || r.status); return; }
+  logo = d.upload; logoName = f.name; store.set('wm_logo', logo); store.set('wm_logo_name', f.name); showLogo();
+};
 
 const drop = $('#drop');
 drop.onclick = () => $('#file').click();
@@ -239,9 +304,12 @@ $('#go').onclick = async () => {
   const form = {
     url: src === 'url' ? $('#url').value.trim() : '', upload: src === 'file' ? upload : null,
     dari: $('#dari').value.trim(), sampai: $('#sampai').value.trim(),
-    style: pick.style, layout: pick.layout, corner: $('#corner').value, size: $('#size').value,
+    look: pick.look, layout: pick.layout, corner: $('#corner').value, size: $('#size').value,
     max_clips: +$('#max').value, music: $('#music').checked, effects: $('#effects').checked,
     context: $('#context').checked, captions: $('#captions').checked,
+    shake: $('#shake').checked, censor: $('#censor').checked, max_words: $('#words').value,
+    whole: $('#whole').checked, length: $('#length').value, watermark_text: $('#wmtext').value.trim(),
+    watermark_logo: logo, watermark_pos: $('#wmpos').value,
   };
   const r = await fetch('/api/jobs', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(form)});
   const j = await r.json();

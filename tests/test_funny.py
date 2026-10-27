@@ -1,4 +1,5 @@
 """Tests for the funny-moment pipeline (funny/): detection, picking, captions, edit graph."""
+import os
 import shutil
 import subprocess
 
@@ -372,3 +373,90 @@ def test_save_edits_rerenders_with_the_corrected_words(tmp_path):
     assert again["lines"][0]["text"].startswith("Anjay") and again["context"] == "Saya: diedit"
     with pytest.raises(ValueError):
         pipeline.save_edits(str(tmp_path), 1, texts[:-1] if len(texts) > 1 else texts + ["x"])
+
+
+# --- looks from the reference clips ---------------------------------------------
+
+def test_shout_is_found_and_plain_talk_is_not():
+    rng = np.random.default_rng(3)
+    talk = _babble(10, rng)
+    audio = np.concatenate([talk, 4 * _babble(1.0, rng), _babble(6, rng)]).astype(np.float32)
+    spans = laughter.shouts(audio)
+    assert len(spans) == 1 and 9.5 <= spans[0][0] <= 10.3 and spans[0][1] >= 10.6
+    assert laughter.shouts(np.concatenate([talk, _babble(20, rng)]).astype(np.float32)) == []
+
+
+def test_shouts_shake_but_not_on_top_of_a_punch_in():
+    p = effects.plan({"punchlines": [15.0]}, 10.0, 40.0, shouts=[(14.9, 15.5), (30.0, 34.0)])
+    assert p.shouts == [(20.0, 20.0 + effects.SHOUT_MAX_S)]
+    z = effects.zoom_filter(p)
+    assert "between((on/30),20.000,21.500)" in z and "max(" in z
+    quiet = effects.plan({"punchlines": []}, 0.0, 30.0, shouts=[(5.0, 6.0)])
+    assert effects.zoom_filter(quiet) and "sin" in effects.zoom_filter(quiet)
+
+
+def test_clip_length_band():
+    tr = {"segments": [_seg(i * 5.0, i * 5.0 + 4.5, "kata kata kata") for i in range(60)]}
+    s, e = moments.snap_window(200.0, 210.0, tr, 300.0, moments.LENGTHS["panjang"])
+    assert 60 <= e - s <= 120 and s < 200 - 30  # grew mostly backwards
+    s, e = moments.snap_window(5.0, 10.0, tr, 300.0, moments.LENGTHS["panjang"])
+    assert s == 0.0 and e >= 60
+    assert "60-120 detik" in moments.build_prompt(tr, [], 300, 3, moments.LENGTHS["panjang"])
+
+
+def test_whole_moment_is_the_whole_stretch(monkeypatch):
+    monkeypatch.setattr(moments, "_call_model", lambda prompt: (None, "none"))
+    laughs = [{"start": 18.0, "end": 21.0, "peak": 20.0, "score": 0.8}]
+    found, _ = moments.whole_moment(TRANSCRIPT, laughs, 40.0, log=lambda *_: None)
+    assert len(found) == 1 and found[0]["start"] == 0.0 and found[0]["end"] == 40.0
+    assert found[0]["punchlines"]
+
+
+def test_look_captions_title_watermark_and_colours():
+    words = captions.clip_words(TRANSCRIPT, 12.5, 21.0)
+    ass = captions.build_ass(words, style="warna", title="Yang orang lain lihat 🤣",
+                             watermark="@anca", watermark_pos="kanan-tengah", duration=8.5)
+    assert "Yang orang lain lihat}" not in ass and "Yang orang lain lihat\n" in ass
+    assert "\\an3\\pos(1040,740)}@anca" in ass
+    assert captions.GREEN in ass and captions.CYAN in ass
+    frasa = captions.build_ass([{"word": "anjing", "start": 0, "end": 0.5}], style="frasa")
+    assert "ANJING" in frasa
+    assert "ANJ*NG" in captions.build_ass([{"word": "anjing", "start": 0, "end": 0.5}])
+    two = captions.build_ass(words, style="streamer", max_words=2)
+    assert any(line.count("\\c") >= 2 for line in two.splitlines() if line.startswith("Dialogue"))
+
+
+def test_form_carries_look_watermark_and_mode():
+    from funny import webapp
+    opts, kw = webapp.options_from_form({"look": "cerita", "watermark_text": " @anca  klip ",
+                                         "watermark_logo": "../../etc/x.png",
+                                         "watermark_pos": "tengah?", "max_words": "2",
+                                         "censor": False, "whole": True, "length": "panjang"})
+    assert opts["style"] == "cerita" and opts["watermark_text"] == "@anca klip"
+    assert opts["watermark_logo"].endswith(os.path.join("uploads", "x.png"))
+    assert opts["watermark_pos"] == "kanan-atas" and opts["max_words"] == 2
+    assert opts["censor"] is False and kw["whole"] and kw["length"] == "panjang"
+    with pytest.raises(ValueError):
+        webapp.options_from_form({"look": "nope"})
+
+
+@pytest.mark.skipif(not shutil.which("ffmpeg"), reason="needs ffmpeg")
+def test_render_looks(tmp_path):
+    src = tmp_path / "src.mp4"
+    subprocess.run(["ffmpeg", "-v", "error", "-f", "lavfi", "-i", "testsrc=size=640x360:rate=30",
+                    "-f", "lavfi", "-i", "sine=frequency=220", "-t", "8", "-shortest",
+                    "-c:v", "libx264", "-preset", "ultrafast", "-c:a", "aac", str(src)], check=True)
+    logo = tmp_path / "logo.png"
+    subprocess.run(["ffmpeg", "-v", "error", "-f", "lavfi", "-i", "color=red:s=120x60",
+                    "-frames:v", "1", str(logo)], check=True)
+    tr = {"segments": [_seg(0.5, 4.0, "Anjir lucu banget sumpah")]}
+    m = {"start": 0.0, "end": 7.0, "punchlines": [3.5], "meme_text": "WKWK",
+         "context_text": "Yang orang lain lihat", "title": "t"}
+    for look in ("party", "cerita"):
+        out = tmp_path / f"{look}.mp4"
+        opts = {"look": look, "shouts": [(1.0, 2.0)], "watermark_text": "@anca",
+                "watermark_logo": str(logo), "watermark_pos": "kiri-bawah"}
+        info = pipeline.render_clip(str(src), (640, 360, 8.0), m, tr, str(out),
+                                    str(tmp_path / "c"), opts, log=lambda *_: None)
+        w, h, dur = pipeline.probe(str(out))
+        assert (w, h) == (1080, 1920) and 6.5 < dur < 7.5, look

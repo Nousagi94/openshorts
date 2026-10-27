@@ -27,6 +27,9 @@ from pydantic import BaseModel, Field
 
 MIN_CLIP_S = 12.0
 MAX_CLIP_S = 60.0
+# Clip length choices on the page: (min, max) seconds.
+LENGTHS = {"pendek": (12.0, 30.0), "sedang": (30.0, 60.0), "panjang": (60.0, 120.0)}
+DEFAULT_LENGTH = (MIN_CLIP_S, MAX_CLIP_S)
 PRE_ROLL_S = 20.0     # set-up before the laugh peak
 POST_ROLL_S = 4.0     # the reaction is part of the joke
 DEFAULT_MAX_CLIPS = 5
@@ -85,8 +88,12 @@ def _sentence_bounds(transcript):
     return [(float(s["start"]), float(s["end"])) for s in (transcript or {}).get("segments", [])]
 
 
-def snap_window(start, end, transcript, duration):
-    """Widen [start, end] to whole sentences and clamp to the clip length band."""
+def snap_window(start, end, transcript, duration, band=DEFAULT_LENGTH):
+    """Widen [start, end] to whole sentences and clamp to the clip length ``band``.
+
+    A clip that is too short grows mostly backwards: more set-up, then the joke.
+    """
+    min_s, max_s = band
     bounds = _sentence_bounds(transcript)
     for i, (a, b) in enumerate(bounds):
         if a <= start < b:
@@ -97,11 +104,13 @@ def snap_window(start, end, transcript, duration):
             end = b
     start = max(0.0, start)
     end = min(float(duration), end)
-    if end - start < MIN_CLIP_S:
-        pad = (MIN_CLIP_S - (end - start)) / 2
-        start, end = max(0.0, start - pad), min(float(duration), end + pad)
-    if end - start > MAX_CLIP_S:
-        start = end - MAX_CLIP_S
+    if end - start < min_s:
+        pad = min_s - (end - start)
+        start, end = max(0.0, start - pad * 0.75), min(float(duration), end + pad * 0.25)
+        if end - start < min_s:  # hit an edge of the video: grow the other way
+            start, end = max(0.0, end - min_s), min(float(duration), start + min_s)
+    if end - start > max_s:
+        start = end - max_s
     return round(start, 2), round(end, 2)
 
 
@@ -154,7 +163,8 @@ def next_sentence_start(transcript, t):
     return min(starts) if starts else None
 
 
-def heuristic_moments(laughs, transcript, duration, max_clips=DEFAULT_MAX_CLIPS):
+def heuristic_moments(laughs, transcript, duration, max_clips=DEFAULT_MAX_CLIPS,
+                      band=DEFAULT_LENGTH):
     """Clips around the strongest laughs, for when no model is available."""
     moments = []
     for m in sorted(laughs, key=lambda m: -m["score"]):
@@ -163,7 +173,7 @@ def heuristic_moments(laughs, transcript, duration, max_clips=DEFAULT_MAX_CLIPS)
         nxt = next_sentence_start(transcript, m["t"] - 0.5)
         if nxt is not None and nxt < end:
             end = max(m["t"] + 1.0, nxt)  # stop before the next topic starts
-        start, end = snap_window(punch - PRE_ROLL_S, end, transcript, duration)
+        start, end = snap_window(punch - PRE_ROLL_S, end, transcript, duration, band)
         moments.append({
             "start": start, "end": end, "punchlines": [round(punch, 2)],
             "funny_score": int(round(m["score"] * 100)),
@@ -191,7 +201,7 @@ def format_transcript(transcript, laughs, max_chars=60000):
     return text[:max_chars]
 
 
-def build_prompt(transcript, laughs, duration, max_clips=DEFAULT_MAX_CLIPS):
+def build_prompt(transcript, laughs, duration, max_clips=DEFAULT_MAX_CLIPS, band=DEFAULT_LENGTH):
     return f"""Kamu adalah editor konten komedi untuk TikTok, Reels, dan Shorts Indonesia.
 Dari transkrip video berdurasi {duration:.0f} detik di bawah, pilih maksimal {max_clips} momen PALING LUCU
 yang bisa berdiri sendiri sebagai klip pendek.
@@ -200,7 +210,8 @@ Penanda [TAWA skor] artinya di detik itu terdengar tawa (skor 0-1, makin tinggi 
 Tawa biasanya terjadi SETELAH punchline, jadi klip harus memuat set-up, punchline, dan reaksinya.
 
 Aturan:
-- Durasi tiap klip {MIN_CLIP_S:.0f}-{MAX_CLIP_S:.0f} detik. Mulai di awal kalimat, jangan potong di tengah kata.
+- Durasi tiap klip {band[0]:.0f}-{band[1]:.0f} detik. Mulai di awal kalimat, jangan potong di tengah kata.
+  Klip panjang boleh berisi beberapa lelucon berturut-turut; sertakan set-up dan reaksinya.
 - Utamakan: punchline, roasting, salah ucap, reaksi kaget, plesetan, situasi absurd, celetukan spontan.
 - Jangan pilih bagian yang hanya lucu kalau tahu konteks panjang sebelumnya.
 - "punchlines": detik (absolut, dari transkrip) saat lelucon mendarat. Di situ editor akan zoom dan kasih efek suara.
@@ -246,7 +257,7 @@ def _call_model(prompt):
     return parsed, "gemini:" + model
 
 
-def clean_model_moments(raw, transcript, duration, max_clips):
+def clean_model_moments(raw, transcript, duration, max_clips, band=DEFAULT_LENGTH):
     """Validate, snap and clamp what the model returned."""
     out = []
     for m in (raw or {}).get("moments", []):
@@ -256,7 +267,7 @@ def clean_model_moments(raw, transcript, duration, max_clips):
             continue
         if m["end"] <= m["start"] or m["start"] >= duration:
             continue
-        m["start"], m["end"] = snap_window(m["start"], m["end"], transcript, duration)
+        m["start"], m["end"] = snap_window(m["start"], m["end"], transcript, duration, band)
         m["punchlines"] = [round(float(p), 2) for p in m["punchlines"]
                            if m["start"] <= float(p) <= m["end"]] or \
                           [round(m["start"] + (m["end"] - m["start"]) * 0.7, 2)]
@@ -308,7 +319,7 @@ def transcript_chunks(transcript, max_chars):
 
 
 def find_moments(transcript, audio_events, duration, max_clips=DEFAULT_MAX_CLIPS,
-                 use_model=True, log=print, progress=None):
+                 use_model=True, log=print, progress=None, band=DEFAULT_LENGTH):
     """The funny moments of a video, best effort, never raising on the model.
 
     A long transcript goes to the model in pieces (``transcript_chunks``);
@@ -328,14 +339,14 @@ def find_moments(transcript, audio_events, duration, max_clips=DEFAULT_MAX_CLIPS
             lo, hi = segs[0]["start"] - 5, segs[-1]["end"] + 5
             piece_laughs = [m for m in laughs if lo <= m["t"] <= hi]
             try:
-                raw, provider = _call_model(build_prompt(piece, piece_laughs, duration, per_piece))
+                raw, provider = _call_model(build_prompt(piece, piece_laughs, duration, per_piece, band))
             except Exception as e:
                 log(f"⚠️ Model gagal di bagian {i} ({type(e).__name__}: {str(e)[:160]})")
                 continue
             if raw is None:
                 log(f"ℹ️ Model dilewati ({provider}), pakai deteksi tawa saja")
                 break
-            found += clean_model_moments(raw, transcript, duration, per_piece)
+            found += clean_model_moments(raw, transcript, duration, per_piece, band)
             if progress:
                 progress(i / len(pieces))
         moments = dedupe(found, max_clips)
@@ -345,4 +356,31 @@ def find_moments(transcript, audio_events, duration, max_clips=DEFAULT_MAX_CLIPS
             return moments, laughs
         if provider and not found:
             log("ℹ️ Model tidak memberi momen, pakai deteksi tawa saja")
-    return heuristic_moments(laughs, transcript, duration, max_clips), laughs
+    return heuristic_moments(laughs, transcript, duration, max_clips, band), laughs
+
+
+def whole_moment(transcript, audio_events, duration, use_model=True, log=print, progress=None):
+    """The whole video as one clip ("Edit utuh").
+
+    The usual pass still runs, but only to borrow its words: the best moment's
+    title, caption, context line and meme text, and every moment's punchlines,
+    plus the strongest laughs, become the effects of the one long clip.
+    """
+    found, laughs = find_moments(transcript, audio_events, duration, max_clips=5,
+                                 use_model=use_model, log=log, progress=progress)
+    punches = {round(float(p), 2) for m in found for p in m.get("punchlines") or []}
+    for m in sorted(laughs, key=lambda m: -m["score"])[:max(4, int(duration // 20))]:
+        if m["score"] >= 0.5:
+            punches.add(round(punch_before(transcript, m["t"]), 2))
+    best = max(found, key=lambda m: m.get("funny_score", 0)) if found else {}
+    moment = {
+        "start": 0.0, "end": round(duration, 2), "punchlines": sorted(punches),
+        "funny_score": best.get("funny_score", 50),
+        "title": best.get("title") or "Momen paling ngakak 🤣",
+        "caption": best.get("caption") or _text_between(transcript, 0, duration)[:200]
+        or "Gak kuat liat ini 😭",
+        "hashtags": best.get("hashtags") or ["#lucu", "#ngakak", "#fyp", "#komedi"],
+        "meme_text": best.get("meme_text", ""), "context_text": best.get("context_text", ""),
+        "reason": "edit utuh", "source": best.get("source", "heuristic"),
+    }
+    return [moment], laughs

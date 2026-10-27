@@ -28,7 +28,7 @@ from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import unquote, urlparse
 
-from . import pipeline
+from . import moments, pipeline
 
 HOST = "127.0.0.1"
 PORT = int(os.environ.get("FUNNY_WEB_PORT", "8765"))
@@ -54,23 +54,44 @@ def facecam_spec(corner, size):
     return f"{x:.3f},{y:.3f},{w:.3f},{h:.3f}"
 
 
+WATERMARK_POSITIONS = ("kiri-atas", "kanan-atas", "kanan-tengah", "kiri-bawah", "kanan-bawah")
+
+
 def options_from_form(form):
     """Pipeline options + run kwargs from the page's JSON form."""
     layout = form.get("layout") or "blur"
-    options = {"style": form.get("style") or "streamer", "layout": layout,
+    look = form.get("look") or form.get("style") or "streamer"
+    if look not in pipeline.LOOKS:
+        raise ValueError(f"gaya tidak dikenal: {look}")
+    options = {"look": look, "style": pipeline.LOOKS[look]["style"], "layout": layout,
                "music": bool(form.get("music", True)),
                "effects": bool(form.get("effects", True)),
                "captions": bool(form.get("captions", True)),
-               "context": bool(form.get("context", True))}
+               "context": bool(form.get("context", True)),
+               "shake": bool(form.get("shake", True))}
     if "meme" in form and form["meme"] is not None:
         options["meme"] = bool(form["meme"])
+    if form.get("censor") is not None:
+        options["censor"] = bool(form["censor"])
+    if str(form.get("max_words") or "auto") != "auto":
+        options["max_words"] = max(1, min(4, int(form["max_words"])))
+    text = " ".join(str(form.get("watermark_text") or "").split())[:40]
+    if text:
+        options["watermark_text"] = text
+    if form.get("watermark_logo"):
+        options["watermark_logo"] = os.path.join(UPLOADS, os.path.basename(form["watermark_logo"]))
+    if text or form.get("watermark_logo"):
+        pos = form.get("watermark_pos") or "kanan-atas"
+        options["watermark_pos"] = pos if pos in WATERMARK_POSITIONS else "kanan-atas"
     if layout == "stream":
         options["facecam"] = facecam_spec(form.get("corner") or "kanan-bawah",
                                           form.get("size") or "sedang")
     kwargs = {"max_clips": max(1, min(10, int(form.get("max_clips") or 5))),
               "start": pipeline.parse_time(form.get("dari") or None),
               "end": pipeline.parse_time(form.get("sampai") or None),
-              "use_model": not form.get("no_model")}
+              "use_model": not form.get("no_model"),
+              "whole": bool(form.get("whole")),
+              "length": form.get("length") if form.get("length") in moments.LENGTHS else None}
     return options, kwargs
 
 

@@ -31,6 +31,19 @@ SFX_ROTATION = ("boom", "boing", "ding", "pop")
 MUSIC_DB = -20.0     # music under speech, before ducking
 STREAM_TOP_H = 760   # facecam band height on the stream layout (captions sit on its seam)
 LOUDNESS_LUFS = -14  # what TikTok/Reels/Shorts normalise to anyway
+JUDUL_Y = 520        # "judul" layout: the video's top edge under the title
+JUDUL_MAX_H = 1000
+DROP_MUFFLE_S, DROP_GAP_S = 2.5, 0.35
+
+# Watermark corners: (x, y) of the anchor point and the overlay expression for a logo.
+WATERMARK_POS = {
+    "kiri-atas": ((40, 70), "40:70"),
+    "kanan-atas": ((OUT_W - 40, 70), "W-w-40:70"),
+    "kanan-tengah": ((OUT_W - 40, OUT_H // 2 - 220), "W-w-40:H/2-h-200"),
+    "kiri-bawah": ((40, 1540), "40:1540-h"),
+    "kanan-bawah": ((OUT_W - 40, 1540), "W-w-40:1540-h"),
+}
+LOGO_W = 200
 
 
 @dataclass
@@ -43,10 +56,37 @@ class EditPlan:
     shake: bool = True
     flash: bool = True
     takeover: bool = False   # stream layout: facecam fills the frame at the punchline
+    shouts: List[tuple] = field(default_factory=list)  # (start, end) clip seconds: shake
+    party: bool = False      # disco hue strobe + negative flash after each punchline
+    drop: bool = False       # muffle, then a beat of silence, before the first punchline
 
 
-def plan(moment, clip_start, clip_end, effects=True, meme=True, layout="blur"):
-    """Turn a moment's absolute punchline times into a clip-time edit plan."""
+SHOUT_ZOOM = 1.10    # a shake needs room to move in
+SHOUT_PX = 22
+SHOUT_MAX_S = 1.5
+PARTY_S = 1.6
+
+
+def clip_shouts(shouts, clip_start, clip_end, punches=()):
+    """Shout spans inside the clip, in clip time, away from punch-ins (those shake already)."""
+    out = []
+    for s, e in shouts or []:
+        s, e = max(s, clip_start) - clip_start, min(e, clip_end) - clip_start
+        e = min(e, s + SHOUT_MAX_S)
+        if e - s < 0.2 or any(p - 0.3 <= s <= p + RISE_S + HOLD_S for p in punches):
+            continue
+        out.append((round(s, 2), round(e, 2)))
+    return out[:12]
+
+
+def plan(moment, clip_start, clip_end, effects=True, meme=True, layout="blur",
+         shouts=(), party=False, drop=False):
+    """Turn a moment's absolute punchline times into a clip-time edit plan.
+
+    ``shouts``: absolute (start, end) spans to shake. ``party`` and ``drop``
+    are the "Party" and "Meme cerita" looks (see ``video_fx_filters`` and
+    ``build_command``). A long clip gets one punchline every ~15 s at most.
+    """
     duration = clip_end - clip_start
     punches = []
     for p in sorted(moment.get("punchlines") or []):
@@ -54,9 +94,10 @@ def plan(moment, clip_start, clip_end, effects=True, meme=True, layout="blur"):
         # Effects closer than 2 s to each other read as noise; keep the first.
         if 0.3 <= t <= duration - 0.5 and (not punches or t - punches[-1] >= 2.0):
             punches.append(round(t, 2))
-    punches = punches[:4]
+    punches = punches[:max(4, int(duration // 15))]
     if not effects:
         return EditPlan(duration, [], zoom=False, shake=False, flash=False)
+    shake_spans = clip_shouts(shouts, clip_start, clip_end, punches)
     sfx = []
     for i, t in enumerate(punches):
         sfx.append((max(0.0, t - 0.4), "whoosh"))
@@ -64,10 +105,11 @@ def plan(moment, clip_start, clip_end, effects=True, meme=True, layout="blur"):
     memes = []
     if meme and moment.get("meme_text") and punches:
         memes = [(punches[0] + 0.15, moment["meme_text"])]
+    drop = drop and bool(punches) and punches[0] >= 2.0
     if layout == "stream":
         return EditPlan(duration, punches, sfx, memes, zoom=False, shake=False,
-                        flash=False, takeover=True)
-    return EditPlan(duration, punches, sfx, memes)
+                        flash=False, takeover=True, shouts=shake_spans, party=party, drop=drop)
+    return EditPlan(duration, punches, sfx, memes, shouts=shake_spans, party=party, drop=drop)
 
 
 def takeover_enable(plan_: EditPlan):
@@ -87,20 +129,40 @@ def _envelope(p):
 
 
 def zoom_filter(plan_: EditPlan):
-    """``zoompan`` doing punch-ins (+ shake) at every punchline, or None."""
-    if not (plan_.zoom and plan_.punchlines):
+    """``zoompan`` doing punch-ins (+ shake) at every punchline and a shake
+    on every shout, or None when there is neither."""
+    punches = plan_.punchlines if plan_.zoom else []
+    if not (punches or plan_.shouts):
         return None
     T = f"(on/{FPS})"
-    env = "+".join(_envelope(p) for p in plan_.punchlines).replace("T", T)
-    z = f"1+{ZOOM - 1:.3f}*min(1,{env})"
-    shake = "0"
+    parts = []
+    if punches:
+        env = "+".join(_envelope(p) for p in punches).replace("T", T)
+        parts.append(f"{ZOOM - 1:.3f}*min(1,{env})")
+    if plan_.shouts:
+        inside = "+".join(f"between({T},{a:.3f},{b:.3f})" for a, b in plan_.shouts)
+        parts.append(f"{SHOUT_ZOOM - 1:.3f}*min(1,{inside})")
+    z = f"1+max({','.join(parts)})" if len(parts) == 2 else f"1+{parts[0]}"
+    shakes = []
     if plan_.shake:
-        shake = "+".join(
-            f"if(between({T},{p:.3f},{p + SHAKE_S:.3f}),{SHAKE_PX}*sin({T}*95),0)"
-            for p in plan_.punchlines)
+        shakes += [f"if(between({T},{p:.3f},{p + SHAKE_S:.3f}),{SHAKE_PX}*sin({T}*95),0)"
+                   for p in punches]
+    shakes += [f"if(between({T},{a:.3f},{b:.3f}),{SHOUT_PX}*sin({T}*83),0)"
+               for a, b in plan_.shouts]
+    shake = "+".join(shakes) or "0"
     x = f"max(0,min(iw-iw/zoom,iw/2-iw/zoom/2+({shake})))"
     y = f"max(0,min(ih-ih/zoom,ih/2-ih/zoom/2+({shake.replace('sin', 'cos')})))"
     return f"zoompan=z='{z}':x='{x}':y='{y}':d=1:s={OUT_W}x{OUT_H}:fps={FPS}"
+
+
+def party_filters(plan_: EditPlan):
+    """Disco lights after each punchline: hue jumps every 0.1 s, one negative frame."""
+    if not (plan_.party and plan_.punchlines):
+        return []
+    on = "+".join(f"between(t,{p:.3f},{p + PARTY_S:.3f})" for p in plan_.punchlines)
+    neg = "+".join(f"between(t,{p + 0.5:.3f},{p + 0.57:.3f})" for p in plan_.punchlines)
+    return [f"hue=H='2*PI*0.27*floor(t*10)':s=1.7:enable='{on}'",
+            f"negate=enable='{neg}'"]
 
 
 def flash_filters(plan_: EditPlan):
@@ -140,6 +202,11 @@ def reframe_filters(src_w, src_h, mode="blur", facecam=None, takeover=None):
     the whole frame (stream only).
     A source that is already vertical is only scaled.
     """
+    if mode == "judul":
+        # Meme-story look: white page, title on top (drawn by the captions), video below it.
+        return (f"color=white:s={OUT_W}x{OUT_H}:r={FPS}[page];"
+                f"[0:v]scale={OUT_W}:{JUDUL_MAX_H}:force_original_aspect_ratio=decrease,"
+                f"setsar=1[fg];[page][fg]overlay=(W-w)/2:{JUDUL_Y}:shortest=1,fps={FPS}[base]")
     if mode == "stream" and facecam:
         top_h = STREAM_TOP_H
         graph = (f"[0:v]split={3 if takeover else 2}[camsrc][scrsrc]{'[fullsrc]' if takeover else ''};"
@@ -205,7 +272,8 @@ def _escape_path(path):
 
 def build_command(src, start, end, out, plan_: EditPlan, src_size, ass_path=None,
                   fonts_dir=None, sfx_paths=None, music_path=None, reframe="blur",
-                  facecam=None, music_db=MUSIC_DB, crf=20, preset="veryfast"):
+                  facecam=None, music_db=MUSIC_DB, crf=20, preset="veryfast",
+                  logo_path=None, logo_pos="kanan-atas"):
     """The full ffmpeg argv for one funny clip."""
     duration = end - start
     sfx_paths = sfx_paths or {}
@@ -218,19 +286,36 @@ def build_command(src, start, end, out, plan_: EditPlan, src_size, ass_path=None
     if zf:
         chain.append(zf)
     chain += flash_filters(plan_)
+    chain += party_filters(plan_)
     if ass_path:
         sub = f"ass='{_escape_path(ass_path)}'"
         if fonts_dir:
             sub += f":fontsdir='{_escape_path(fonts_dir)}'"
         chain.append(sub)
-    chain.append("format=yuv420p")
-    graph.append("[base]" + ",".join(chain) + "[v]")
+    idx = 1
+    if logo_path:
+        args += ["-loop", "1", "-i", logo_path]
+        pos = WATERMARK_POS.get(logo_pos, WATERMARK_POS["kanan-atas"])[1]
+        graph.append("[base]" + ",".join(chain) + "[pre]")
+        graph.append(f"[{idx}:v]scale={LOGO_W}:-1,format=rgba,colorchannelmixer=aa=0.85[logo]")
+        graph.append(f"[pre][logo]overlay={pos}:shortest=1,format=yuv420p[v]")
+        idx += 1
+    else:
+        chain.append("format=yuv420p")
+        graph.append("[base]" + ",".join(chain) + "[v]")
 
     # Audio: voice, then one input per effect, then the music bed.
-    voice = "[0:a]aresample=44100,aformat=channel_layouts=stereo,asplit=2[voice][key]"
-    graph.append(voice)
+    voice = "[0:a]aresample=44100,aformat=channel_layouts=stereo"
+    music_from = 0.0
+    if plan_.drop:
+        # Meme-story drop: muffled build-up, a beat of silence, then the punchline hits.
+        p = plan_.punchlines[0]
+        a, b = max(0.0, p - DROP_MUFFLE_S), p - DROP_GAP_S
+        voice += (f",lowpass=f=650:enable='between(t,{a:.3f},{b:.3f})'"
+                  f",volume=0:enable='between(t,{b:.3f},{p:.3f})'")
+        music_from = p
+    graph.append(voice + ",asplit=2[voice][key]")
     mix_inputs = ["[voice]"]
-    idx = 1
     for i, (t, name) in enumerate(plan_.sfx):
         path = sfx_paths.get(name)
         if not path:
@@ -244,10 +329,16 @@ def build_command(src, start, end, out, plan_: EditPlan, src_size, ass_path=None
         idx += 1
     if music_path:
         args += ["-stream_loop", "-1", "-i", music_path]
+        delay = ""
+        if music_from:
+            ms = int(music_from * 1000)
+            delay = f"adelay={ms}|{ms},"
+            music_db += 4  # the drop: music comes in loud with the punchline
         graph.append(
             f"[{idx}:a]aresample=44100,aformat=channel_layouts=stereo,"
-            f"atrim=0:{duration:.3f},volume={music_db}dB,"
-            f"afade=t=in:d=0.5,afade=t=out:st={max(0.0, duration - 1.0):.3f}:d=1[bed];"
+            f"atrim=0:{max(0.5, duration - music_from):.3f},volume={music_db}dB,"
+            f"afade=t=in:d={0.05 if music_from else 0.5},"
+            f"afade=t=out:st={max(0.0, duration - music_from - 1.0):.3f}:d=1,{delay}anull[bed];"
             f"[bed][key]sidechaincompress=threshold=0.04:ratio=6:attack=20:release=400[music]")
         mix_inputs.append("[music]")
         idx += 1

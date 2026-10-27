@@ -31,6 +31,19 @@ STAGES = (("download", "Download / ambil video"), ("transkripsi", "Ubah suara ja
 # to give the progress bar an estimate: mlx on an M-series GPU vs CPU whisper.
 ASR_SPEED = {"mlx": 6.0, "cpu": 2.0}
 
+# "Gaya edit": each look is a caption style plus the effects that go with it,
+# after the creator's reference clips. Music/effects/captions stay separate
+# options, so the page can preset them per look and still let them be changed.
+LOOKS = {
+    "streamer": {"style": "streamer"},
+    "meme": {"style": "meme"},
+    "warna": {"style": "warna"},
+    "frasa": {"style": "frasa"},
+    "party": {"style": "warna", "party": True},
+    "cerita": {"style": "cerita", "layout": "judul", "drop": True, "title": True},
+    "bersih": {"style": "streamer"},
+}
+
 
 def _no_progress(stage, fraction=None, detail=None, eta=None):
     pass
@@ -213,21 +226,35 @@ def render_clip(src, src_size, moment, transcript, out_path, cache_dir, options,
     """Render one clip. ``words`` (clip time) overrides the transcript's subtitles;
     ``seed`` picks the music track (default: the output path)."""
     start, end = moment["start"], moment["end"]
+    look = LOOKS.get(options.get("look") or options.get("style") or "", {})
     facecam = options.get("facecam_box")
-    layout = "stream" if facecam else options.get("layout", "blur")
+    layout = look.get("layout") or ("stream" if facecam else options.get("layout", "blur"))
     if layout == "stream" and not facecam:
         layout = "blur"
-    style = options.get("style", captions.DEFAULT_STYLE)
+    style = look.get("style") or options.get("style", captions.DEFAULT_STYLE)
+    shouts = options.get("shouts") if options.get("shake", True) else None
     plan = effects.plan(moment, start, end, effects=options.get("effects", True),
-                        meme=options.get("meme", style == "meme"), layout=layout)
-    context = moment.get("context_text") if options.get("context", True) else None
+                        meme=options.get("meme", style == "meme"), layout=layout,
+                        shouts=shouts, party=look.get("party", False),
+                        drop=look.get("drop", False))
+    title = None
+    if look.get("title"):
+        title = moment.get("context_text") or moment.get("title")
+    context = moment.get("context_text") if options.get("context", True) and not title else None
     ass_path = out_path.rsplit(".", 1)[0] + ".ass"
     tr = transcript if options.get("captions", True) else None
     if not options.get("captions", True):
         words = None
     if not captions.write_ass(tr, start, end, ass_path, memes=plan.memes, style=style,
-                              context=context, words=words):
+                              context=context, words=words, censored=options.get("censor"),
+                              max_words=options.get("max_words"), title=title,
+                              watermark=options.get("watermark_text"),
+                              watermark_pos=options.get("watermark_pos", "kanan-atas")):
         ass_path = None
+    logo = options.get("watermark_logo")
+    if logo and not os.path.exists(logo):
+        log(f"⚠️ Logo watermark tidak ditemukan: {logo}")
+        logo = None
     track = None
     if options.get("music", True):
         track = choose_music(cache_dir, options.get("mood", "funny"), seed=seed or out_path)
@@ -235,7 +262,8 @@ def render_clip(src, src_size, moment, transcript, out_path, cache_dir, options,
         src, start, end, out_path, plan, src_size[:2], ass_path=ass_path,
         fonts_dir=FONTS_DIR, sfx_paths=sfx_paths(cache_dir) if plan.sfx else None,
         music_path=track["path"] if track else None, reframe=layout, facecam=facecam,
-        music_db=options.get("music_db", effects.MUSIC_DB))
+        music_db=options.get("music_db", effects.MUSIC_DB), logo_path=logo,
+        logo_pos=options.get("watermark_pos", "kanan-atas"))
     t0 = time.time()
     proc = subprocess.run(cmd, capture_output=True, text=True)
     if proc.returncode != 0:
@@ -243,7 +271,8 @@ def render_clip(src, src_size, moment, transcript, out_path, cache_dir, options,
     if ass_path and not options.get("keep_ass"):
         os.remove(ass_path)
     log(f"   🎬 {os.path.basename(out_path)} ({end - start:.0f}s, "
-        f"{len(plan.punchlines)} punchline, {time.time() - t0:.0f}s render)")
+        f"{len(plan.punchlines)} punchline, {len(plan.shouts)} getar, "
+        f"{time.time() - t0:.0f}s render)")
     music_info = None
     if track:
         music_info = {"file": os.path.basename(track["path"]), "source": track["source"],
@@ -257,7 +286,8 @@ def post_text(m):
 
 
 def run(source, out_dir, transcript=None, language="id", max_clips=5, use_model=True,
-        options=None, start=None, end=None, log=print, progress=_no_progress):
+        options=None, start=None, end=None, log=print, progress=_no_progress, whole=False,
+        length=None):
     """The whole pipeline. ``source`` is a file path or a URL.
 
     ``start``/``end`` (seconds) limit the analysis to that stretch; clip times
@@ -267,6 +297,11 @@ def run(source, out_dir, transcript=None, language="id", max_clips=5, use_model=
     ``progress(stage, fraction, detail, eta)`` is called as each of
     ``STAGES`` starts and advances; ``fraction`` is None when unknown and
     ``eta`` is a rough total in seconds for stages without real progress.
+
+    ``whole``: no picking; the video (or the ``start``-``end`` stretch) becomes
+    one clip, edited end to end, with the AI only writing its title and
+    marking the punchlines. ``length``: a ``moments.LENGTHS`` key for the
+    clip length (default 12-60 s).
     """
     options = options or {}
     os.makedirs(out_dir, exist_ok=True)
@@ -282,9 +317,6 @@ def run(source, out_dir, transcript=None, language="id", max_clips=5, use_model=
     progress("download", 1.0, f"video {duration / 60:.0f} menit siap")
     log(f"📼 {os.path.basename(source)}: {w}x{h}, {duration:.0f}s")
     options["facecam_box"] = resolve_facecam(options, source, (w, h), log)
-    with open(os.path.join(out_dir, "render.json"), "w", encoding="utf-8") as f:
-        json.dump({"source": os.path.abspath(source), "size": [w, h], "options": options}, f,
-                  ensure_ascii=False, indent=2)
 
     if transcript is None:
         progress("transkripsi", None, f"video {duration / 60:.0f} menit", asr_eta(duration))
@@ -297,15 +329,27 @@ def run(source, out_dir, transcript=None, language="id", max_clips=5, use_model=
     progress("transkripsi", 1.0, f"{words} kata")
     progress("tawa", None, "menganalisis audio")
     log("😂 Deteksi tawa…")
-    curve, events = laughter.detect(source)
-    log(f"   {len(events)} lonjakan tawa/hype di audio")
+    audio = laughter.load_audio(source)
+    curve, events = laughter.detect(source, audio)
+    options["shouts"] = laughter.shouts(audio)
+    del audio
+    log(f"   {len(events)} lonjakan tawa/hype, {len(options['shouts'])} teriakan di audio")
     progress("tawa", 1.0, f"{len(events)} momen tawa terdengar")
+    with open(os.path.join(out_dir, "render.json"), "w", encoding="utf-8") as f:
+        json.dump({"source": os.path.abspath(source), "size": [w, h], "options": options}, f,
+                  ensure_ascii=False, indent=2)
     progress("ai", None, "membaca transkrip", 30 + words / 40)
 
-    found, laughs = moments_mod.find_moments(
-        transcript, events, duration, max_clips, use_model=use_model, log=log,
-        progress=lambda f: progress("ai", min(f, 0.99)))
-    progress("ai", 1.0, f"{len(found)} momen dipilih")
+    if whole:
+        found, laughs = moments_mod.whole_moment(
+            transcript, events, duration, use_model=use_model, log=log,
+            progress=lambda f: progress("ai", min(f, 0.99)))
+    else:
+        found, laughs = moments_mod.find_moments(
+            transcript, events, duration, max_clips, use_model=use_model, log=log,
+            progress=lambda f: progress("ai", min(f, 0.99)),
+            band=moments_mod.LENGTHS.get(length or "", moments_mod.DEFAULT_LENGTH))
+    progress("ai", 1.0, "judul dan punchline siap" if whole else f"{len(found)} momen dipilih")
     if not found:
         log("🤷 Tidak ada momen lucu yang terdeteksi.")
     results = []

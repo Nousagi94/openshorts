@@ -31,6 +31,8 @@ BLACK = "&H00000000"
 YELLOW = "&H0000E5FF"   # ASS is &HAABBGGRR -> #FFE500
 RED = "&H003C3CFF"      # #FF3C3C
 BLUE = "&H00FF7B2F"     # #2F7BFF
+GREEN = "&H0047E34B"    # #4BE347
+CYAN = "&H00F5E62E"     # #2EE6F5
 
 STYLES = {
     "streamer": {"font": "Bangers", "size": 92, "emph_size": 104, "pos_y": 790,
@@ -42,7 +44,26 @@ STYLES = {
              "color": WHITE, "active": YELLOW, "emph": RED, "outline_color": BLACK,
              "spacing": 2, "pop": True, "tilt": True},
 }
+# Looks from the creator's reference clips (see docs/architecture/funny-clips.md).
+STYLES["warna"] = dict(STYLES["streamer"], outline_color=BLACK, outline=6,
+                       rotate=[GREEN, WHITE, YELLOW, CYAN])
+STYLES["frasa"] = {"font": "Montserrat ExtraBold", "size": 76, "emph_size": 80, "pos_y": 800,
+                   "max_words": 3, "max_chars": 22, "max_s": 1.6, "outline": 6, "shadow": 2,
+                   "color": WHITE, "active": YELLOW, "emph": YELLOW, "outline_color": BLACK,
+                   "spacing": 1, "pop": False, "tilt": False, "italic": True, "censor": False}
+STYLES["cerita"] = {"font": "Montserrat ExtraBold", "size": 78, "emph_size": 84, "pos_y": 1250,
+                    "max_words": 3, "max_chars": 20, "max_s": 1.4, "outline": 6, "shadow": 0,
+                    "color": WHITE, "active": BLUE, "emph": BLUE, "outline_color": BLACK,
+                    "spacing": 1, "pop": True, "tilt": False}
 DEFAULT_STYLE = "streamer"
+TITLE_Y = 300
+WATERMARK_SIZE = 46
+# Watermark anchors, matching effects.WATERMARK_POS: (x, y, ASS alignment).
+WATERMARK_ANCHOR = {
+    "kiri-atas": (40, 70, 7), "kanan-atas": (PLAY_W - 40, 70, 9),
+    "kanan-tengah": (PLAY_W - 40, PLAY_H // 2 - 220, 3),
+    "kiri-bawah": (40, 1540, 1), "kanan-bawah": (PLAY_W - 40, 1540, 3),
+}
 
 # Words that are the joke in Indonesian chat/streams. Matched on the cleaned,
 # lowercased word; "wkwk"-style laughs match by pattern.
@@ -94,9 +115,17 @@ def _escape(text: str) -> str:
     return text.replace("\\", "").replace("{", "(").replace("}", ")").replace("\n", " ")
 
 
-def _display(word):
+_EMOJI = re.compile("[\U00010000-\U0010FFFF\u2600-\u27BF\uFE0F\u200D]+")
+
+
+def _plain(text: str) -> str:
+    """Without emoji: the caption fonts have none, libass would draw boxes."""
+    return " ".join(_EMOJI.sub("", text).split())
+
+
+def _display(word, censored=True):
     """Caption text for a word: caps, censored, no trailing . or , (keep ? and !)."""
-    up = censor(word).upper()
+    up = (censor(word) if censored else word).upper()
     return _escape(up.rstrip(".,;:") or up)
 
 
@@ -135,27 +164,43 @@ def blocks(words, max_words=3, max_chars=16, max_s=1.3):
     return out
 
 
-def _word_markup(word, active, st):
-    text = _display(word["word"])
-    if is_emphasis(word["word"]):
+def _word_markup(word, active, st, base=None, censored=True):
+    """One word's ASS markup. ``base``: this block's colour (``rotate`` styles)."""
+    text = _display(word["word"], censored)
+    color = base or st["color"]
+    if is_emphasis(word["word"]) and not base:
         tilt = "\\frz-4" if active and st["tilt"] else ""
         pop = ("\\t(0,90,\\fscx125\\fscy125)\\t(90,180,\\fscx100\\fscy100)"
                if active and st["pop"] else "")
         return f"{{\\c{st['emph']}\\fs{st['emph_size']}{tilt}{pop}}}{text}{{\\r}}"
     if active:
         pop = "\\fscx112\\fscy112\\t(0,120,\\fscx100\\fscy100)" if st["pop"] else ""
-        return f"{{\\c{st['active']}{pop}}}{text}{{\\r}}"
-    return f"{{\\c{st['color']}}}{text}"
+        return f"{{\\c{base or st['active']}{pop}}}{text}{{\\r}}"
+    return f"{{\\c{color}}}{text}"
 
 
-def build_ass(words, memes=(), style=DEFAULT_STYLE, context=None) -> str:
+def build_ass(words, memes=(), style=DEFAULT_STYLE, context=None, censored=None,
+              max_words=None, title=None, watermark=None, watermark_pos="kanan-atas",
+              duration=None) -> str:
     """Full ASS document for already re-timed ``words``.
 
     ``memes``: ``(time, text)`` pairs in clip time; each pops in at the top of
     the frame for ``MEME_S`` seconds, tilted, like a meme-page overlay.
     ``context``: one line shown bottom-left for the first ``CONTEXT_S`` seconds.
+    ``censored``: star out swears (default: the style's choice, on for most).
+    ``max_words``: words per caption, overriding the style.
+    ``title``: a heading at the top for the whole clip (the "judul" layout).
+    ``watermark``: the creator's name in a corner (``WATERMARK_ANCHOR``) throughout.
     """
-    st = STYLES.get(style, STYLES[DEFAULT_STYLE])
+    st = dict(STYLES.get(style, STYLES[DEFAULT_STYLE]))
+    if censored is None:
+        censored = st.get("censor", True)
+    if max_words:
+        st["max_words"] = int(max_words)
+        st["max_chars"] = 14 if max_words == 1 else 8 * int(max_words)
+        st["max_s"] = 0.9 if max_words == 1 else 0.5 * int(max_words) + 0.3
+    end_all = duration or max([w["end"] for w in words] + [t + MEME_S for t, _ in memes]
+                              + [CONTEXT_S])
     header = f"""[Script Info]
 ScriptType: v4.00+
 PlayResX: {PLAY_W}
@@ -165,19 +210,23 @@ ScaledBorderAndShadow: yes
 
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-Style: Funny,{st['font']},{st['size']},{st['color']},{st['color']},{st['outline_color']},&H96000000,0,0,0,0,100,100,{st['spacing']},0,1,{st['outline']},{st['shadow']},5,60,60,0,1
+Style: Funny,{st['font']},{st['size']},{st['color']},{st['color']},{st['outline_color']},&H96000000,0,{-1 if st.get('italic') else 0},0,0,100,100,{st['spacing']},0,1,{st['outline']},{st['shadow']},5,60,60,0,1
 Style: Meme,Anton,{MEME_SIZE},{YELLOW},{YELLOW},{BLACK},&H96000000,0,0,0,0,100,100,3,0,1,9,6,5,60,60,0,1
 Style: Context,Montserrat ExtraBold,46,{WHITE},{WHITE},{BLACK},&H96000000,0,0,0,0,100,100,0,0,1,4,2,1,40,40,60,1
+Style: Title,Montserrat ExtraBold,74,{BLACK},{BLACK},{WHITE},&H00FFFFFF,0,0,0,0,100,100,0,0,1,0,0,5,70,70,0,1
+Style: Watermark,Montserrat ExtraBold,{WATERMARK_SIZE},&H30FFFFFF,&H30FFFFFF,&H60000000,&H96000000,0,0,0,0,100,100,1,0,1,3,0,7,40,40,0,1
 """
     header += "\n[Events]\nFormat: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n"
     lines = []
-    for blk in blocks(words, st["max_words"], st["max_chars"], st["max_s"]):
+    rotate = st.get("rotate")
+    for n, blk in enumerate(blocks(words, st["max_words"], st["max_chars"], st["max_s"])):
+        base = rotate[n % len(rotate)] if rotate else None
         for i, w in enumerate(blk):
             start = w["start"] if i else blk[0]["start"]
             end = blk[i + 1]["start"] if i + 1 < len(blk) else max(w["end"], start + 0.25)
             if end <= start:
                 continue
-            body = " ".join(_word_markup(x, x is w, st) for x in blk)
+            body = " ".join(_word_markup(x, x is w, st, base, censored) for x in blk)
             pos = f"{{\\pos({PLAY_W // 2},{st['pos_y']})}}"
             lines.append(f"Dialogue: 0,{_ass_time(start)},{_ass_time(end)},Funny,,0,0,0,,{pos}{body}")
     for t, text in memes:
@@ -186,27 +235,37 @@ Style: Context,Montserrat ExtraBold,46,{WHITE},{WHITE},{BLACK},&H96000000,0,0,0,
         pop = ("{\\fscx40\\fscy40\\frz-8\\t(0,140,\\fscx118\\fscy118)"
                "\\t(140,260,\\fscx100\\fscy100)}")
         lines.append(f"Dialogue: 1,{_ass_time(t)},{_ass_time(t + MEME_S)},Meme,,0,0,0,,"
-                     f"{{\\pos({PLAY_W // 2},{MEME_Y})}}{pop}{_escape(text.upper())}")
+                     f"{{\\pos({PLAY_W // 2},{MEME_Y})}}{pop}{_escape(_plain(text).upper())}")
     if context:
-        text = _escape(context).replace(": ", ":\\N", 1)
+        text = _escape(_plain(context)).replace(": ", ":\\N", 1)
         lines.append(f"Dialogue: 2,{_ass_time(0)},{_ass_time(CONTEXT_S)},Context,,0,0,0,,"
                      f"{{\\fad(150,300)}}{text}")
+    if title:
+        lines.append(f"Dialogue: 3,{_ass_time(0)},{_ass_time(end_all)},Title,,0,0,0,,"
+                     f"{{\\pos({PLAY_W // 2},{TITLE_Y})}}{_escape(_plain(title))}")
+    if watermark:
+        x, y, an = WATERMARK_ANCHOR.get(watermark_pos, WATERMARK_ANCHOR["kanan-atas"])
+        # The title page is white: a dark mark there, a light one on video.
+        dark = "\\c&H303030&\\3c&HFFFFFF&" if title and watermark_pos != "kanan-tengah" else ""
+        lines.append(f"Dialogue: 4,{_ass_time(0)},{_ass_time(end_all)},Watermark,,0,0,0,,"
+                     f"{{\\an{an}\\pos({x},{y}){dark}}}{_escape(_plain(watermark))}")
     return header + "\n".join(lines) + "\n"
 
 
 def write_ass(transcript, clip_start, clip_end, path, memes=(), style=DEFAULT_STYLE,
-              context=None, words=None) -> bool:
+              context=None, words=None, **look) -> bool:
     """Write the clip's captions (and overlays); False when there is nothing to show.
 
     ``words`` (clip time) replaces the transcript's words, e.g. after the
-    creator corrected the subtitles by hand.
+    creator corrected the subtitles by hand. ``look``: the rest of
+    ``build_ass``'s options (censored, max_words, title, watermark, ...).
     """
     if words is None:
         words = clip_words(transcript, clip_start, clip_end)
-    if not words and not memes and not context:
+    if not (words or memes or context or look.get("title") or look.get("watermark")):
         return False
     with open(path, "w", encoding="utf-8") as f:
-        f.write(build_ass(words, memes, style, context))
+        f.write(build_ass(words, memes, style, context, duration=clip_end - clip_start, **look))
     return True
 
 

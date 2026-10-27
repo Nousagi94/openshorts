@@ -172,3 +172,60 @@ def detect(media_path: str, audio: Optional[np.ndarray] = None):
         audio = load_audio(media_path)
     curve = score_curve(audio)
     return curve, peaks(curve)
+
+
+# --- shouts -------------------------------------------------------------------
+
+SHOUT_DB = 10.0      # this much over the local speaking level is a shout
+SHOUT_MIN_S = 0.25
+SHOUT_GAP_S = 0.5
+
+
+def loudness_db(audio: np.ndarray) -> np.ndarray:
+    """Per-frame (10 ms) RMS in dB, without the FFT work of ``frame_features``."""
+    frames_all = _frames(audio)
+    out = np.empty(len(frames_all), dtype=np.float32)
+    for a in range(0, len(frames_all), 6000):
+        frames = frames_all[a:a + 6000]
+        out[a:a + len(frames)] = 10 * np.log10(np.mean(frames ** 2, axis=1) + 1e-12)
+    return out
+
+
+def shouts(audio: np.ndarray, min_db: float = SHOUT_DB):
+    """``(start, end)`` seconds where someone yells: the 100 ms loudness
+    jumps ``min_db`` over the median speaking level of the last ``BASELINE_S``
+    and stays there for ``SHOUT_MIN_S``. Laughs and cheers count too, which
+    is what the shake is for anyway."""
+    db = loudness_db(audio)
+    if len(db) < FPS:
+        return []
+    # Short-term loudness: mean energy over 300 ms, so syllable gaps average out.
+    k = int(0.3 * FPS)
+    power = np.convolve(10 ** (db / 10), np.ones(k) / k, mode="same")
+    smooth = 10 * np.log10(power + 1e-12)
+    # Silence/room tone sits under this; a file with no pauses has no such floor.
+    gate = min(np.percentile(smooth, 20) + 6, np.percentile(smooth, 50) - 3)
+    voiced = np.where(smooth > gate, smooth, np.nan)
+    # Median speaking level over the preceding window, stepped for speed.
+    span, step = int(BASELINE_S * FPS), FPS // 4
+    base = np.empty_like(smooth)
+    for i in range(0, len(db), step):
+        seg = voiced[max(0, i - span):i + 1:5]
+        base[i:i + step] = np.nanmedian(seg) if np.any(~np.isnan(seg)) else gate
+    hot = smooth > np.maximum(base + min_db, gate)
+    out = []
+    i, n = 0, len(hot)
+    while i < n:
+        if not hot[i]:
+            i += 1
+            continue
+        j = i
+        while j < n and hot[j]:
+            j += 1
+        s, e = i / FPS, j / FPS
+        if out and s - out[-1][1] <= SHOUT_GAP_S:
+            out[-1] = (out[-1][0], e)
+        else:
+            out.append((s, e))
+        i = j
+    return [(round(s, 2), round(e, 2)) for s, e in out if e - s >= SHOUT_MIN_S]

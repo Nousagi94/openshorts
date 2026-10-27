@@ -52,6 +52,32 @@ punch effects, ASS captions, then voice + SFX + ducked music
   README). Never ship a trending copyrighted song burned into the clip.
   Empty library -> generated loop (`funny/synth.py`); SFX are generated too.
 
+## Looks ("gaya edit"), watermark, whole-range mode
+
+`pipeline.LOOKS` maps each look to a caption style and its effects, taken
+from the creator's reference clips: `streamer`, `meme`, `warna` (one word,
+rotating colours), `frasa` (2-3 word italic, uncensored), `party` (hue strobe
+plus a negative frame after each punchline, `effects.party_filters`), `cerita`
+(white "judul" page with the title on top, then a muffled build, a beat of
+silence and the music dropping in at the first punchline: `plan.drop`) and
+`bersih` (the page unticks music, effects, captions and context).
+
+- Shouts: `laughter.shouts` flags a 300 ms loudness that jumps 10 dB over
+  the median speaking level of the last 8 s. `effects.clip_shouts` keeps the
+  ones that are not already a punch-in, and `zoom_filter` shakes them at a
+  1.1 zoom, so there is room to move. They are stored in `render.json`
+  options, so the subtitle editor's re-render keeps them.
+- Watermark: the text is an ASS line (`WATERMARK_ANCHOR`), dark on the
+  white title page. The logo is an overlay input (`WATERMARK_POS`, 200 px
+  wide).
+- Options: `censor` and `max_words` override the look.
+- `run(whole=True)`: the stretch becomes one clip.
+  `moments.whole_moment` borrows the best moment's title, caption and
+  context, plus every punchline and strong laugh.
+- `run(length=...)`: picks the clip length band from `moments.LENGTHS`
+  (pendek 12-30 s, sedang 30-60 s, panjang 60-120 s). `snap_window` grows a
+  short clip mostly backwards, adding set-up.
+
 ## Browser UI (`funny/webapp.py`)
 
 `python -m funny.webapp` (or double-click `Auto Klip Lucu.command`) serves

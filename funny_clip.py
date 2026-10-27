@@ -39,13 +39,30 @@ def main(argv=None):
                    help="speech language for whisper (default id; 'auto' to detect)")
     p.add_argument("--max-clips", type=int, default=5)
     p.add_argument("--no-model", action="store_true", help="laughter only, no LLM call")
+    p.add_argument("--durasi", "--length", dest="length", choices=("pendek", "sedang", "panjang"),
+                   help="clip length: pendek 12-30 s, sedang 30-60 s, panjang 1-2 min "
+                   "(default 12-60 s)")
     p.add_argument("--layout", "--reframe", dest="layout", choices=("blur", "crop", "stream"),
                    default="blur", help="blur: full frame over blurred fill; crop: centre crop; "
                    "stream: facecam on top, screen/game below")
     p.add_argument("--facecam", default="auto",
                    help="stream layout: facecam box x,y,w,h (pixels or 0-1 fractions), or auto")
-    p.add_argument("--style", choices=("streamer", "meme"), default="streamer",
-                   help="caption look: streamer (1 word, blue) or meme (yellow/red caps)")
+    p.add_argument("--style", "--gaya", dest="style", choices=tuple(pipeline.LOOKS),
+                   default="streamer",
+                   help="edit look: streamer (1 word, blue), meme (yellow/red caps), warna "
+                   "(1 word, rotating colours), frasa (2-3 word italic), party (disco lights), "
+                   "cerita (title page + drop), bersih (plain)")
+    p.add_argument("--utuh", "--whole", dest="whole", action="store_true",
+                   help="no picking: the whole video (or --dari/--sampai) as one edited clip")
+    p.add_argument("--watermark", help="your channel name, shown in a corner")
+    p.add_argument("--logo", help="logo image (PNG) shown in a corner")
+    p.add_argument("--watermark-pos", default="kanan-atas",
+                   choices=("kiri-atas", "kanan-atas", "kanan-tengah", "kiri-bawah", "kanan-bawah"))
+    p.add_argument("--censor", action=argparse.BooleanOptionalAction, default=None,
+                   help="star out swear words (default: per look)")
+    p.add_argument("--kata", type=int, choices=(1, 2, 3, 4),
+                   help="words per caption (default: per look)")
+    p.add_argument("--no-shake", action="store_true", help="no shake when someone shouts")
     p.add_argument("--no-context", action="store_true", help="no context line at the start")
     p.add_argument("--no-captions", action="store_true")
     p.add_argument("--no-effects", action="store_true", help="no zoom/shake/flash/SFX")
@@ -64,15 +81,26 @@ def main(argv=None):
             transcript = json.load(f)
     options = {"captions": not a.no_captions, "effects": not a.no_effects,
                "music": not a.no_music, "mood": a.mood, "music_db": a.music_db,
-               "layout": a.layout, "facecam": a.facecam, "style": a.style,
-               "context": not a.no_context, "keep_ass": a.keep_ass}
+               "layout": a.layout, "facecam": a.facecam, "look": a.style,
+               "style": pipeline.LOOKS[a.style]["style"], "shake": not a.no_shake,
+               "context": not a.no_context, "keep_ass": a.keep_ass,
+               "watermark_pos": a.watermark_pos}
     if a.meme is not None:
         options["meme"] = a.meme
+    if a.censor is not None:
+        options["censor"] = a.censor
+    if a.kata:
+        options["max_words"] = a.kata
+    if a.watermark:
+        options["watermark_text"] = a.watermark
+    if a.logo:
+        options["watermark_logo"] = os.path.abspath(a.logo)
     summary = pipeline.run(a.input or a.url, a.output, transcript=transcript,
                            language=None if a.language == "auto" else a.language,
                            max_clips=a.max_clips, use_model=not a.no_model,
                            options=options, start=pipeline.parse_time(a.start),
-                           end=pipeline.parse_time(a.end))
+                           end=pipeline.parse_time(a.end), whole=a.whole,
+                           length=a.length)
     print(f"\n✅ {len(summary['clips'])} klip di {a.output}")
     for c in summary["clips"]:
         print(f"   {c['file']}  [{c['funny_score']}]  {c['title']}")

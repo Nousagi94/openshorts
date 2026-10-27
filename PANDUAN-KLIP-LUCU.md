@@ -84,6 +84,33 @@ Hasilnya ada di folder `output/funny/`:
 - `funny_01.txt`, ... judul, caption, dan hashtag siap copy-paste
 - `funny_clips.json` detail lengkap (skor lucu, waktu punchline, dll)
 
+### Gaya edit, durasi, dan watermark
+
+Di aplikasi, pilih **Gaya edit**:
+
+| Gaya | Hasilnya |
+|---|---|
+| Streamer | Subtitle satu kata, biru dengan outline putih |
+| Meme | Kapital kuning, kata lucu merah, teks meme besar |
+| Warna-warni | Satu kata, warnanya berganti hijau, putih, kuning, biru |
+| Frasa gameplay | 2-3 kata miring, putih dan kuning, tanpa sensor |
+| Party | Lampu disko warna-warni dan kilatan saat momen lucu |
+| Meme cerita | Latar putih dengan judul di atas, hening sebentar sebelum punchline lalu musik masuk |
+| Bersih | Tanpa subtitle, musik, dan efek |
+
+Pengaturan lain:
+
+- **Getar saat teriak**: video bergetar otomatis setiap ada yang berteriak.
+- **Durasi tiap klip**:
+  - Pendek: 12-30 detik.
+  - Sedang: 30-60 detik.
+  - Panjang: 1-2 menit.
+- **Edit utuh**: isi "Mulai dari" dan "Sampai", lalu centang Edit utuh. Seluruh
+  rentang itu jadi satu klip yang diedit penuh.
+- **Watermark**: isi nama channel dan/atau pilih logo, lalu atur posisinya.
+  Pengaturan ini diingat untuk proses berikutnya.
+- **Kata per subtitle** dan **Sensor kata kasar**: atur sesuai selera.
+
 ### Memperbaiki subtitle
 
 Kalau ada kata yang salah dengar, klik **✏️ Edit subtitle** di bawah klip.
