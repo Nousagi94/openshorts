@@ -249,3 +249,21 @@ def test_render_end_to_end(tmp_path):
 def test_snap_skips_a_sentence_that_is_ending():
     assert moments.snap_window(4.8, 21.0, TRANSCRIPT, 40.0)[0] == 5.5
     assert moments.snap_window(3.0, 21.0, TRANSCRIPT, 40.0)[0] == 0.0
+
+
+# --- web app ----------------------------------------------------------------
+
+def test_facecam_spec_corners():
+    from funny import webapp
+    assert webapp.facecam_spec("kanan-bawah", "sedang") == "0.750,0.600,0.250,0.400"
+    assert webapp.facecam_spec("kiri-atas", "kecil") == "0.000,0.000,0.200,0.300"
+
+
+def test_options_from_form():
+    from funny import webapp
+    opts, kw = webapp.options_from_form({"layout": "stream", "corner": "kiri-bawah",
+                                         "style": "meme", "max_clips": 50, "dari": "1:00",
+                                         "sampai": "", "music": False})
+    assert opts["facecam"].startswith("0.000,0.600") and opts["style"] == "meme"
+    assert opts["music"] is False and kw["max_clips"] == 10
+    assert kw["start"] == 60 and kw["end"] is None

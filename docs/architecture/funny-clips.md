@@ -52,11 +52,22 @@ punch effects, ASS captions, then voice + SFX + ducked music
   README). Never ship a trending copyrighted song burned into the clip.
   Empty library -> generated loop (`funny/synth.py`); SFX are generated too.
 
+## Browser UI (`funny/webapp.py`)
+
+`python -m funny.webapp` (or double-click `Auto Klip Lucu.command`) serves
+`funny/web/index.html` on 127.0.0.1:8765 with the standard library only. One
+job runs at a time; uploads stream as a raw body (`X-Filename` header), jobs
+write to `output/web/<job id>/`, and `/files/<job>/funny_NN.mp4` serves the
+clips with Range support (Safari will not play a video without it). Facecam
+for the stream layout is a corner + size pick (`webapp.facecam_spec`).
+
 ## Mac
 
 `scripts/setup_mac.sh` installs ffmpeg/python/ollama with Homebrew, the deps
 from `requirements-funny.txt` into `.venv`, pulls `qwen2.5:7b` (`qwen2.5:3b`
-under 12 GB RAM) and writes the local `.env`. `./klip ...` runs the CLI.
+under 12 GB RAM) and writes the local `.env`; it installs Homebrew itself when
+missing. `Install.command` wraps it for a Finder double-click. `./klip ...`
+runs the CLI.
 `TRANSCRIBE_BACKEND=mlx` falls back to CPU faster-whisper on any failure.
 
 ## Tests

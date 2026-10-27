@@ -1,0 +1,221 @@
+<!doctype html>
+<html lang="id">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Auto Klip Lucu</title>
+<style>
+:root{--bg:#f6f5f2;--card:#fff;--ink:#1d1c1a;--muted:#6b6862;--line:#e3e0da;--accent:#2f6bff;--accent-ink:#fff;--ok:#1f8a4c;--bad:#c2372f;--soft:#eef2ff}
+@media (prefers-color-scheme:dark){:root{--bg:#161615;--card:#1f1f1d;--ink:#eeece8;--muted:#a19d96;--line:#33322f;--accent:#5b8cff;--accent-ink:#0b0b0a;--soft:#232a3d}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif}
+main{max-width:980px;margin:0 auto;padding:28px 16px 64px}
+h1{font-size:26px;margin:0 0 4px}
+.sub{color:var(--muted);margin:0 0 22px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:20px;margin-bottom:16px}
+.card h2{font-size:15px;margin:0 0 12px;text-transform:uppercase;letter-spacing:.04em;color:var(--muted)}
+label{display:block;font-weight:600;margin:0 0 6px}
+input[type=text],input[type=url],select{width:100%;padding:11px 12px;border:1px solid var(--line);border-radius:10px;background:var(--bg);color:var(--ink);font:inherit}
+.row{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.tabs{display:flex;gap:6px;margin-bottom:12px}
+.tab,.pick{border:1px solid var(--line);background:var(--bg);color:var(--ink);border-radius:10px;padding:9px 14px;font:inherit;cursor:pointer}
+.tab.on,.pick.on{border-color:var(--accent);background:var(--soft);font-weight:600}
+.drop{border:2px dashed var(--line);border-radius:12px;padding:26px;text-align:center;color:var(--muted);cursor:pointer}
+.drop.over{border-color:var(--accent);background:var(--soft)}
+.picks{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:10px}
+.pick{text-align:left;padding:12px 14px}
+.pick b{display:block;margin-bottom:2px}
+.pick span{color:var(--muted);font-size:13px}
+.toggles{display:flex;flex-wrap:wrap;gap:16px;margin-top:4px}
+.toggles label{font-weight:400;display:flex;align-items:center;gap:6px}
+.hint{color:var(--muted);font-size:13px;margin-top:6px}
+.go{width:100%;padding:15px;border:0;border-radius:12px;background:var(--accent);color:var(--accent-ink);font-family:inherit;font-size:17px;font-weight:600;cursor:pointer}
+.go:disabled{opacity:.5;cursor:default}
+.err{color:var(--bad);margin-top:10px;min-height:1.2em}
+.status{display:flex;align-items:center;gap:10px;font-weight:600}
+.dot{width:10px;height:10px;border-radius:50%;background:var(--accent);animation:p 1s infinite alternate}
+.dot.ok{background:var(--ok);animation:none}.dot.bad{background:var(--bad);animation:none}
+@keyframes p{to{opacity:.3}}
+pre.log{background:var(--bg);border:1px solid var(--line);border-radius:10px;padding:12px;max-height:220px;overflow:auto;font:12.5px/1.45 ui-monospace,Menlo,monospace;white-space:pre-wrap;margin:12px 0 0}
+.clips{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:14px;margin-top:14px}
+.clip{border:1px solid var(--line);border-radius:12px;overflow:hidden;background:var(--bg)}
+.clip video{width:100%;aspect-ratio:9/16;background:#000;display:block}
+.clip .meta{padding:10px 12px}
+.clip .t{font-weight:600;margin-bottom:4px}
+.clip .s{color:var(--muted);font-size:13px}
+.clip .acts{display:flex;gap:8px;margin-top:8px}
+.clip .acts a,.clip .acts button,.small{flex:1;text-align:center;padding:8px;border:1px solid var(--line);border-radius:8px;background:var(--card);color:var(--ink);font:inherit;font-size:13px;cursor:pointer;text-decoration:none}
+.hidden{display:none}
+.progress{height:6px;background:var(--line);border-radius:4px;overflow:hidden;margin-top:10px}
+.progress i{display:block;height:100%;background:var(--accent);width:0}
+@media (max-width:560px){.row{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<main>
+  <h1>Auto Klip Lucu 😂</h1>
+  <p class="sub">Tempel link atau pilih video, lalu klik Buat Klip. Momen lucunya dipilih dan diedit otomatis di Mac kamu.</p>
+
+  <section class="card">
+    <h2>1. Video</h2>
+    <div class="tabs">
+      <button class="tab on" data-src="url">Link</button>
+      <button class="tab" data-src="file">File di Mac</button>
+    </div>
+    <div id="src-url">
+      <input id="url" type="url" placeholder="https://youtu.be/... atau link TikTok, Instagram, Twitch">
+    </div>
+    <div id="src-file" class="hidden">
+      <div id="drop" class="drop">Seret video ke sini, atau klik untuk memilih<input id="file" type="file" accept="video/*" class="hidden"></div>
+      <div class="progress hidden" id="upbar"><i></i></div>
+      <div class="hint" id="upinfo"></div>
+    </div>
+    <div class="row" style="margin-top:14px">
+      <div><label for="dari">Mulai dari (opsional)</label><input id="dari" type="text" placeholder="contoh 10:00"></div>
+      <div><label for="sampai">Sampai (opsional)</label><input id="sampai" type="text" placeholder="contoh 25:30"></div>
+    </div>
+    <div class="hint">Kosongkan untuk seluruh video. Untuk video panjang, isi bagian yang seru supaya lebih cepat.</div>
+  </section>
+
+  <section class="card">
+    <h2>2. Gaya subtitle</h2>
+    <div class="picks" data-group="style">
+      <button class="pick on" data-v="streamer"><b>Streamer</b><span>Satu kata, biru outline putih. Seperti klip live stream.</span></button>
+      <button class="pick" data-v="meme"><b>Meme</b><span>Kapital kuning, kata lucu merah, teks meme besar.</span></button>
+    </div>
+  </section>
+
+  <section class="card">
+    <h2>3. Tampilan video</h2>
+    <div class="picks" data-group="layout">
+      <button class="pick on" data-v="blur"><b>Utuh + latar blur</b><span>Semua orang tetap kelihatan. Cocok untuk podcast.</span></button>
+      <button class="pick" data-v="crop"><b>Penuh layar</b><span>Dipotong di tengah. Cocok untuk satu orang.</span></button>
+      <button class="pick" data-v="stream"><b>Facecam + layar</b><span>Wajah di atas, game di bawah. Wajah full screen saat punchline.</span></button>
+    </div>
+    <div id="facecam" class="row hidden" style="margin-top:14px">
+      <div><label for="corner">Letak facecam di video asli</label>
+        <select id="corner"><option value="kanan-bawah">Pojok kanan bawah</option><option value="kiri-bawah">Pojok kiri bawah</option><option value="kanan-atas">Pojok kanan atas</option><option value="kiri-atas">Pojok kiri atas</option></select></div>
+      <div><label for="size">Ukuran facecam</label>
+        <select id="size"><option value="kecil">Kecil</option><option value="sedang" selected>Sedang</option><option value="besar">Besar</option></select></div>
+    </div>
+  </section>
+
+  <section class="card">
+    <h2>4. Lainnya</h2>
+    <div class="row">
+      <div><label for="max">Jumlah klip maksimal</label>
+        <select id="max"><option>1</option><option>2</option><option selected>3</option><option>5</option><option>8</option></select></div>
+      <div></div>
+    </div>
+    <div class="toggles" style="margin-top:12px">
+      <label><input type="checkbox" id="music" checked> Musik latar</label>
+      <label><input type="checkbox" id="effects" checked> Efek zoom &amp; suara</label>
+      <label><input type="checkbox" id="context" checked> Teks konteks di awal</label>
+      <label><input type="checkbox" id="captions" checked> Subtitle</label>
+    </div>
+  </section>
+
+  <button class="go" id="go">Buat Klip</button>
+  <div class="err" id="err"></div>
+
+  <section class="card hidden" id="job">
+    <div class="status"><span class="dot" id="dot"></span><span id="stat">Memproses…</span></div>
+    <div class="hint" id="elapsed"></div>
+    <pre class="log" id="log"></pre>
+    <div class="clips" id="clips"></div>
+    <div style="margin-top:12px" class="hidden" id="folderwrap"><button class="small" id="folder">Buka folder hasil di Finder</button></div>
+  </section>
+</main>
+<script>
+const $ = s => document.querySelector(s);
+let src = 'url', upload = null, uploading = false, jobId = null, timer = null;
+const pick = {style:'streamer', layout:'blur'};
+
+document.querySelectorAll('.tab').forEach(b => b.onclick = () => {
+  document.querySelectorAll('.tab').forEach(x => x.classList.toggle('on', x === b));
+  src = b.dataset.src;
+  $('#src-url').classList.toggle('hidden', src !== 'url');
+  $('#src-file').classList.toggle('hidden', src !== 'file');
+});
+document.querySelectorAll('.picks').forEach(g => g.querySelectorAll('.pick').forEach(b => b.onclick = () => {
+  g.querySelectorAll('.pick').forEach(x => x.classList.toggle('on', x === b));
+  pick[g.dataset.group] = b.dataset.v;
+  $('#facecam').classList.toggle('hidden', pick.layout !== 'stream');
+}));
+
+const drop = $('#drop');
+drop.onclick = () => $('#file').click();
+drop.ondragover = e => { e.preventDefault(); drop.classList.add('over'); };
+drop.ondragleave = () => drop.classList.remove('over');
+drop.ondrop = e => { e.preventDefault(); drop.classList.remove('over'); if (e.dataTransfer.files[0]) send(e.dataTransfer.files[0]); };
+$('#file').onchange = e => e.target.files[0] && send(e.target.files[0]);
+
+function send(file) {
+  upload = null; uploading = true;
+  $('#upbar').classList.remove('hidden');
+  $('#upinfo').textContent = 'Menyiapkan ' + file.name + '…';
+  const x = new XMLHttpRequest();
+  x.open('POST', '/api/upload');
+  x.setRequestHeader('X-Filename', encodeURIComponent(file.name));
+  x.upload.onprogress = e => { if (e.lengthComputable) $('#upbar i').style.width = (100 * e.loaded / e.total) + '%'; };
+  x.onload = () => {
+    uploading = false;
+    const r = JSON.parse(x.responseText || '{}');
+    if (x.status === 200) { upload = r.upload; $('#upinfo').textContent = '✓ ' + file.name + ' siap'; }
+    else $('#upinfo').textContent = 'Gagal: ' + (r.error || x.status);
+  };
+  x.onerror = () => { uploading = false; $('#upinfo').textContent = 'Gagal menyiapkan file'; };
+  x.send(file);
+}
+
+$('#go').onclick = async () => {
+  $('#err').textContent = '';
+  if (src === 'file' && uploading) return $('#err').textContent = 'Tunggu sebentar, video masih disiapkan.';
+  const form = {
+    url: src === 'url' ? $('#url').value.trim() : '', upload: src === 'file' ? upload : null,
+    dari: $('#dari').value.trim(), sampai: $('#sampai').value.trim(),
+    style: pick.style, layout: pick.layout, corner: $('#corner').value, size: $('#size').value,
+    max_clips: +$('#max').value, music: $('#music').checked, effects: $('#effects').checked,
+    context: $('#context').checked, captions: $('#captions').checked,
+  };
+  const r = await fetch('/api/jobs', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(form)});
+  const j = await r.json();
+  if (!r.ok) return $('#err').textContent = j.error || 'Gagal memulai';
+  jobId = j.id; $('#go').disabled = true;
+  $('#job').classList.remove('hidden'); $('#clips').innerHTML = ''; $('#folderwrap').classList.add('hidden');
+  $('#job').scrollIntoView({behavior:'smooth'});
+  poll();
+};
+
+async function poll() {
+  clearTimeout(timer);
+  const j = await (await fetch('/api/jobs/' + jobId)).json();
+  const done = j.state === 'selesai', bad = j.state === 'gagal';
+  $('#dot').className = 'dot' + (done ? ' ok' : bad ? ' bad' : '');
+  $('#stat').textContent = done ? `Selesai, ${j.clips.length} klip` : bad ? 'Gagal' : j.state === 'antri' ? 'Menunggu giliran…' : 'Memproses… biarkan halaman ini terbuka';
+  $('#elapsed').textContent = bad ? j.error : `Waktu berjalan: ${Math.floor(j.elapsed / 60)} menit ${j.elapsed % 60} detik`;
+  const log = $('#log'); log.textContent = j.log.join('\n'); log.scrollTop = log.scrollHeight;
+  if (done) { showClips(j); $('#go').disabled = false; $('#folderwrap').classList.remove('hidden'); return; }
+  if (bad) { $('#go').disabled = false; return; }
+  timer = setTimeout(poll, 1500);
+}
+
+function showClips(j) {
+  const box = $('#clips'); box.innerHTML = '';
+  if (!j.clips.length) box.innerHTML = '<p class="hint">Tidak ada momen lucu yang ketemu. Coba rentang waktu lain.</p>';
+  j.clips.forEach(c => {
+    const el = document.createElement('div'); el.className = 'clip';
+    const post = `${c.title}\n\n${c.caption}\n\n${c.hashtags.join(' ')}`;
+    el.innerHTML = `<video controls preload="metadata" playsinline src="/files/${j.id}/${c.file}"></video>
+      <div class="meta"><div class="t"></div><div class="s">Skor lucu ${c.score} · ${c.duration} detik</div>
+      <div class="acts"><a download href="/files/${j.id}/${c.file}">Download</a><button>Copy caption</button></div></div>`;
+    el.querySelector('.t').textContent = c.title;
+    const btn = el.querySelector('button');
+    btn.onclick = async () => { await navigator.clipboard.writeText(post); btn.textContent = 'Tersalin ✓'; setTimeout(() => btn.textContent = 'Copy caption', 1500); };
+    box.appendChild(el);
+  });
+}
+$('#folder').onclick = () => fetch(`/api/jobs/${jobId}/open`, {method:'POST'});
+</script>
+</body>
+</html>

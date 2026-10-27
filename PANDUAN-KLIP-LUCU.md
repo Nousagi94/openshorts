@@ -6,7 +6,26 @@ TikTok, Reels, dan Shorts: subtitle per kata, efek saat punchline, dan musik
 latar yang aman dari copyright. Semuanya jalan di Mac kamu, tanpa cloud
 berbayar.
 
-## 1. Pasang sekali saja
+## Cara paling mudah: tanpa Terminal
+
+1. Download kodenya sebagai ZIP:
+   [funny-clips.zip](https://github.com/Nousagi94/openshorts/archive/refs/heads/funny-clips.zip)
+   (setelah pull request di-merge: tombol **Code**, lalu **Download ZIP** di halaman repo).
+2. Klik dua kali file ZIP-nya, lalu pindahkan folder hasilnya ke folder Home kamu.
+3. Buka folder itu. **Klik kanan** `Install.command`, pilih **Open**, lalu **Open** lagi.
+   Klik kanan diperlukan karena macOS menahan file dari internet saat pertama kali dibuka.
+   Masukkan password Mac kalau diminta (ketikannya memang tidak terlihat), lalu tunggu
+   sampai muncul "Instalasi selesai" (20-40 menit).
+4. Untuk memakai: klik dua kali `Auto Klip Lucu.command` (pertama kali: klik kanan, lalu
+   Open). Halaman Auto Klip Lucu terbuka di browser.
+5. Tempel link atau seret file video, isi menit mulai dan selesai kalau perlu, pilih gaya,
+   lalu klik **Buat Klip**. Klipnya bisa langsung ditonton, di-download, dan caption-nya
+   bisa di-copy dari halaman itu.
+
+Jendela Terminal yang ikut terbuka biarkan saja selama aplikasi dipakai. Tutup jendela
+itu kalau sudah selesai. Bagian di bawah ini untuk yang mau memakai Terminal.
+
+## 1. Pasang sekali saja (lewat Terminal)
 
 Butuh: Mac (disarankan Apple Silicon M1 ke atas, RAM 16 GB), ruang kosong
 sekitar 15 GB, dan [Homebrew](https://brew.sh).

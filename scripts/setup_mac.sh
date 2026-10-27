@@ -11,9 +11,16 @@ if [ "$RAM_GB" -lt 12 ] && [ -z "${FUNNY_LLM_MODEL:-}" ]; then
   MODEL="qwen2.5:3b"   # 8 GB Macs: the 7B model does not fit next to whisper
 fi
 
-if ! command -v brew >/dev/null; then
-  echo "Homebrew belum ada. Pasang dulu dari https://brew.sh lalu jalankan ulang skrip ini."
-  exit 1
+load_brew() {
+  for b in /opt/homebrew/bin/brew /usr/local/bin/brew; do
+    [ -x "$b" ] && eval "$("$b" shellenv)" && return 0
+  done
+  return 1
+}
+if ! command -v brew >/dev/null && ! load_brew; then
+  echo "==> Memasang Homebrew (masukkan password Mac kalau diminta; ketikannya memang tidak terlihat)"
+  /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+  load_brew || { echo "Homebrew gagal dipasang. Coba lagi, atau pasang dari https://brew.sh"; exit 1; }
 fi
 
 echo "==> ffmpeg, python, ollama"
@@ -46,6 +53,7 @@ WHISPER_MODEL=small
 ENV
 fi
 
-chmod +x klip
+chmod +x klip "Auto Klip Lucu.command" 2>/dev/null || true
 echo
-echo "Selesai. Coba:  ./klip -u https://youtu.be/xxxx --dari 10:00 --sampai 25:00"
+echo "Selesai. Klik dua kali 'Auto Klip Lucu.command' untuk mulai,"
+echo "atau dari Terminal:  ./klip -u https://youtu.be/xxxx --dari 10:00 --sampai 25:00"
