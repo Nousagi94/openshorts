@@ -270,7 +270,10 @@ def _transcribe_with_mlx(media_path, language=None):
 
     result = mlx_whisper.transcribe(
         media_path, path_or_hf_repo=MLX_WHISPER_MODEL, word_timestamps=True,
-        condition_on_previous_text=False, language=language)
+        condition_on_previous_text=False, language=language,
+        # False (not None) draws mlx-whisper's progress bar in the terminal,
+        # the only sign of life on a long file.
+        verbose=False)
     out_segments = []
     for seg in result.get("segments", []):
         words = [{"word": w["word"], "start": float(w["start"]), "end": float(w["end"])}
