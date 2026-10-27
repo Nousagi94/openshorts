@@ -31,7 +31,9 @@ brew list ollama >/dev/null 2>&1 || brew install ollama
 echo "==> Python packages (.venv)"
 [ -d .venv ] || "$(brew --prefix python@3.12)/bin/python3.12" -m venv .venv
 .venv/bin/pip install -q --upgrade pip
-.venv/bin/pip install -q -r requirements-funny.txt
+echo "    (5-15 menit, biarkan berjalan)"
+.venv/bin/pip install --progress-bar on -r requirements-funny.txt | grep -E "^(Collecting|Successfully)" || true
+.venv/bin/python -c "import faster_whisper, numpy, pydantic" || { echo "Paket Python gagal dipasang."; exit 1; }
 
 echo "==> Font untuk subtitle"
 mkdir -p "$HOME/Library/Fonts"
